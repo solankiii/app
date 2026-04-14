@@ -186,23 +186,39 @@ async def list_leads(
         ]
     leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
     total = await db.leads.count_documents(query)
-    # Enrich with assigned user name
+    # Batch enrich: collect IDs
+    assigned_ids = list({l["assigned_to"] for l in leads if l.get("assigned_to")})
+    lead_ids = [l["id"] for l in leads]
+    # Batch fetch users
+    users_map = {}
+    if assigned_ids:
+        users_list = await db.users.find({"id": {"$in": assigned_ids}}, {"_id": 0, "id": 1, "full_name": 1}).to_list(100)
+        users_map = {u["id"]: u["full_name"] for u in users_list}
+    # Batch fetch last call dates via aggregation
+    last_calls_map = {}
+    if lead_ids:
+        pipeline = [
+            {"$match": {"lead_id": {"$in": lead_ids}}},
+            {"$sort": {"created_at": -1}},
+            {"$group": {"_id": "$lead_id", "last_call": {"$first": "$created_at"}}}
+        ]
+        async for doc in db.call_sessions.aggregate(pipeline):
+            last_calls_map[doc["_id"]] = doc["last_call"]
+    # Batch fetch next follow-ups
+    next_fu_map = {}
+    if lead_ids:
+        pipeline = [
+            {"$match": {"lead_id": {"$in": lead_ids}, "status": "pending"}},
+            {"$sort": {"follow_up_at": 1}},
+            {"$group": {"_id": "$lead_id", "next_fu": {"$first": "$follow_up_at"}}}
+        ]
+        async for doc in db.follow_ups.aggregate(pipeline):
+            next_fu_map[doc["_id"]] = doc["next_fu"]
+    # Map results
     for lead in leads:
-        if lead.get("assigned_to"):
-            u = await db.users.find_one({"id": lead["assigned_to"]}, {"_id": 0, "full_name": 1})
-            lead["assigned_name"] = u["full_name"] if u else "Unassigned"
-        # Get last call date
-        last_call = await db.call_sessions.find_one(
-            {"lead_id": lead["id"]}, {"_id": 0, "created_at": 1},
-            sort=[("created_at", -1)]
-        )
-        lead["last_call_date"] = last_call["created_at"] if last_call else None
-        # Get next follow-up
-        next_fu = await db.follow_ups.find_one(
-            {"lead_id": lead["id"], "status": "pending"}, {"_id": 0, "follow_up_at": 1},
-            sort=[("follow_up_at", 1)]
-        )
-        lead["next_follow_up"] = next_fu["follow_up_at"] if next_fu else None
+        lead["assigned_name"] = users_map.get(lead.get("assigned_to"), "Unassigned")
+        lead["last_call_date"] = last_calls_map.get(lead["id"])
+        lead["next_follow_up"] = next_fu_map.get(lead["id"])
     return {"leads": leads, "total": total}
 
 @api_router.post("/leads")
@@ -254,9 +270,14 @@ async def get_lead(lead_id: str, request: Request):
     lead["notes_list"] = await db.lead_notes.find(
         {"lead_id": lead_id}, {"_id": 0}
     ).sort("created_at", -1).to_list(50)
+    # Batch enrich notes with user names
+    note_user_ids = list({n.get("user_id") for n in lead["notes_list"] if n.get("user_id")})
+    note_users_map = {}
+    if note_user_ids:
+        note_users = await db.users.find({"id": {"$in": note_user_ids}}, {"_id": 0, "id": 1, "full_name": 1}).to_list(100)
+        note_users_map = {u["id"]: u["full_name"] for u in note_users}
     for n in lead["notes_list"]:
-        u = await db.users.find_one({"id": n.get("user_id")}, {"_id": 0, "full_name": 1})
-        n["user_name"] = u["full_name"] if u else "Unknown"
+        n["user_name"] = note_users_map.get(n.get("user_id"), "Unknown")
     lead["follow_ups"] = await db.follow_ups.find(
         {"lead_id": lead_id}, {"_id": 0}
     ).sort("follow_up_at", -1).to_list(50)
@@ -339,12 +360,22 @@ async def list_call_sessions(
     if outcome:
         query["outcome"] = outcome
     sessions = await db.call_sessions.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
+    # Batch enrich
+    lead_ids = list({s.get("lead_id") for s in sessions if s.get("lead_id")})
+    user_ids = list({s.get("user_id") for s in sessions if s.get("user_id")})
+    leads_map = {}
+    if lead_ids:
+        leads_list = await db.leads.find({"id": {"$in": lead_ids}}, {"_id": 0, "id": 1, "full_name": 1, "phone_number": 1}).to_list(100)
+        leads_map = {l["id"]: l for l in leads_list}
+    users_map = {}
+    if user_ids:
+        users_list = await db.users.find({"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "full_name": 1}).to_list(100)
+        users_map = {u["id"]: u["full_name"] for u in users_list}
     for s in sessions:
-        lead = await db.leads.find_one({"id": s.get("lead_id")}, {"_id": 0, "full_name": 1, "phone_number": 1})
-        s["lead_name"] = lead["full_name"] if lead else "Unknown"
-        s["lead_phone"] = lead["phone_number"] if lead else ""
-        u = await db.users.find_one({"id": s.get("user_id")}, {"_id": 0, "full_name": 1})
-        s["user_name"] = u["full_name"] if u else "Unknown"
+        lead = leads_map.get(s.get("lead_id"), {})
+        s["lead_name"] = lead.get("full_name", "Unknown")
+        s["lead_phone"] = lead.get("phone_number", "")
+        s["user_name"] = users_map.get(s.get("user_id"), "Unknown")
     total = await db.call_sessions.count_documents(query)
     return {"sessions": sessions, "total": total}
 
@@ -423,12 +454,22 @@ async def list_follow_ups(
         if "status" not in query:
             query["status"] = {"$ne": "cancelled"}
     follow_ups = await db.follow_ups.find(query, {"_id": 0}).sort("follow_up_at", 1).skip(skip).limit(limit).to_list(limit)
+    # Batch enrich
+    lead_ids = list({f.get("lead_id") for f in follow_ups if f.get("lead_id")})
+    user_ids = list({f.get("assigned_to") for f in follow_ups if f.get("assigned_to")})
+    leads_map = {}
+    if lead_ids:
+        leads_list = await db.leads.find({"id": {"$in": lead_ids}}, {"_id": 0, "id": 1, "full_name": 1, "phone_number": 1}).to_list(100)
+        leads_map = {l["id"]: l for l in leads_list}
+    users_map = {}
+    if user_ids:
+        users_list = await db.users.find({"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "full_name": 1}).to_list(100)
+        users_map = {u["id"]: u["full_name"] for u in users_list}
     for f in follow_ups:
-        lead = await db.leads.find_one({"id": f.get("lead_id")}, {"_id": 0, "full_name": 1, "phone_number": 1})
-        f["lead_name"] = lead["full_name"] if lead else "Unknown"
-        f["lead_phone"] = lead["phone_number"] if lead else ""
-        u = await db.users.find_one({"id": f.get("assigned_to")}, {"_id": 0, "full_name": 1})
-        f["assigned_name"] = u["full_name"] if u else "Unknown"
+        lead = leads_map.get(f.get("lead_id"), {})
+        f["lead_name"] = lead.get("full_name", "Unknown")
+        f["lead_phone"] = lead.get("phone_number", "")
+        f["assigned_name"] = users_map.get(f.get("assigned_to"), "Unknown")
     total = await db.follow_ups.count_documents(query)
     return {"follow_ups": follow_ups, "total": total}
 
@@ -478,9 +519,13 @@ async def update_follow_up(follow_up_id: str, req: FollowUpUpdate, request: Requ
 async def get_lead_notes(lead_id: str, request: Request):
     await get_current_user(request)
     notes = await db.lead_notes.find({"lead_id": lead_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    user_ids = list({n.get("user_id") for n in notes if n.get("user_id")})
+    users_map = {}
+    if user_ids:
+        users_list = await db.users.find({"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "full_name": 1}).to_list(100)
+        users_map = {u["id"]: u["full_name"] for u in users_list}
     for n in notes:
-        u = await db.users.find_one({"id": n.get("user_id")}, {"_id": 0, "full_name": 1})
-        n["user_name"] = u["full_name"] if u else "Unknown"
+        n["user_name"] = users_map.get(n.get("user_id"), "Unknown")
     return notes
 
 @api_router.post("/lead-notes")
@@ -510,18 +555,31 @@ async def list_recordings(
     recordings = await db.call_recordings.find(
         query, {"_id": 0, "base64_data": 0}
     ).sort("uploaded_at", -1).skip(skip).limit(limit).to_list(limit)
+    # Batch enrich
+    session_ids = list({r.get("call_session_id") for r in recordings if r.get("call_session_id")})
+    sessions_map = {}
+    if session_ids:
+        sessions_list = await db.call_sessions.find({"id": {"$in": session_ids}}, {"_id": 0}).to_list(100)
+        sessions_map = {s["id"]: s for s in sessions_list}
+    lead_ids = list({s.get("lead_id") for s in sessions_map.values() if s.get("lead_id")})
+    user_ids = list({s.get("user_id") for s in sessions_map.values() if s.get("user_id")})
+    leads_map = {}
+    if lead_ids:
+        leads_list = await db.leads.find({"id": {"$in": lead_ids}}, {"_id": 0, "id": 1, "full_name": 1}).to_list(100)
+        leads_map = {l["id"]: l["full_name"] for l in leads_list}
+    users_map = {}
+    if user_ids:
+        users_list = await db.users.find({"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "full_name": 1}).to_list(100)
+        users_map = {u["id"]: u["full_name"] for u in users_list}
     for r in recordings:
-        session = await db.call_sessions.find_one({"id": r.get("call_session_id")}, {"_id": 0})
-        if session:
-            r["user_id"] = session.get("user_id")
-            r["lead_id"] = session.get("lead_id")
-            r["outcome"] = session.get("outcome")
-            r["duration_seconds"] = session.get("duration_seconds")
-            r["call_started_at"] = session.get("call_started_at")
-            lead = await db.leads.find_one({"id": session.get("lead_id")}, {"_id": 0, "full_name": 1})
-            r["lead_name"] = lead["full_name"] if lead else "Unknown"
-            u = await db.users.find_one({"id": session.get("user_id")}, {"_id": 0, "full_name": 1})
-            r["user_name"] = u["full_name"] if u else "Unknown"
+        session = sessions_map.get(r.get("call_session_id"), {})
+        r["user_id"] = session.get("user_id")
+        r["lead_id"] = session.get("lead_id")
+        r["outcome"] = session.get("outcome")
+        r["duration_seconds"] = session.get("duration_seconds")
+        r["call_started_at"] = session.get("call_started_at")
+        r["lead_name"] = leads_map.get(session.get("lead_id"), "Unknown")
+        r["user_name"] = users_map.get(session.get("user_id"), "Unknown")
     total = await db.call_recordings.count_documents(query)
     return {"recordings": recordings, "total": total}
 
