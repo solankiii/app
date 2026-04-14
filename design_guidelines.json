@@ -1,0 +1,84 @@
+{
+  "project_context": {
+    "domain": "CRM, Sales Dashboard, Mobile Sales Workflow",
+    "theme": "Light",
+    "archetype": "4 (Swiss & High-Contrast)",
+    "aesthetic": "Professional, authoritative, data-dense, crisp"
+  },
+  "typography": {
+    "fonts": {
+      "headings": "Outfit",
+      "body": "IBM Plex Sans",
+      "import_instructions": "Add to index.html or import via @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=Outfit:wght@400;500;600;700&display=swap');"
+    },
+    "scale": {
+      "h1": "text-4xl sm:text-5xl tracking-tight font-bold",
+      "h2": "text-2xl sm:text-3xl tracking-tight font-semibold",
+      "h3": "text-xl sm:text-2xl tracking-tight font-medium",
+      "body": "text-base leading-relaxed text-gray-700",
+      "caption": "text-sm text-gray-500",
+      "overline": "text-xs font-semibold tracking-[0.2em] uppercase text-gray-500"
+    }
+  },
+  "colors": {
+    "background": "#FAFAFA",
+    "surface": "#FFFFFF",
+    "primary": "#0A0A0A",
+    "primary_hover": "#262626",
+    "text": {
+      "main": "#111827",
+      "muted": "#6B7280"
+    },
+    "border": "#E5E7EB",
+    "status": {
+      "success": "#10B981",
+      "warning": "#F59E0B",
+      "danger": "#EF4444",
+      "info": "#3B82F6"
+    }
+  },
+  "layout_and_spacing": {
+    "sales_mobile": "Mobile-first layout. Use 100vw width constraints for mobile flow logic, stack elements vertically. Generous touch targets (min 44px height).",
+    "admin_desktop": "Data-dense control room. grid-cols-1 md:grid-cols-4. Strict borders, minimal padding inside tables (px-4 py-2) to maximize data visibility.",
+    "surface_strategy": "Cardless or 1px border. No soft drop shadows. E1 Rule: Expose the skeleton, use border-collapse where possible.",
+    "alignment": "Strictly Left-aligned. Never center-align forms, lists, or headers."
+  },
+  "components": {
+    "buttons": "Square or rounded-md. Hard contrasts. Primary: bg-[#0A0A0A] text-white. Secondary: bg-white border border-gray-300 text-gray-900.",
+    "forms": "Use Shadcn Form primitives. Inputs must have clear borders. No native <select> or date inputs; use Shadcn Select and Calendar.",
+    "tables": "For Admin: Shadcn Table. Strict borders on rows. Header rows use gray-50 background.",
+    "tabs": "For Follow-up screen. Clean underline tabs, not pill shaped. Use Shadcn Tabs."
+  },
+  "media": {
+    "images": [
+      {
+        "category": "logo",
+        "url": "https://images.unsplash.com/photo-1651223969333-7a02ad74c4f0?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzN8MHwxfHNlYXJjaHwxfHxhYnN0cmFjdCUyMGdlb21ldHJpYyUyMGxvZ298ZW58MHx8fHwxNzc2MTk5MzUyfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Abstract geometric shape logo"
+      },
+      {
+        "category": "avatar_admin",
+        "url": "https://images.unsplash.com/photo-1762522927402-f390672558d8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjh8MHwxfHNlYXJjaHw0fHxwcm9mZXNzaW9uYWwlMjBidXNpbmVzcyUyMHBvcnRyYWl0JTIwaGVhZHNob3R8ZW58MHx8fHwxNzc2MTk5MzUyfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Admin user profile picture"
+      },
+      {
+        "category": "avatar_sales",
+        "url": "https://images.unsplash.com/photo-1655249481446-25d575f1c054?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMjh8MHwxfHNlYXJjaHwzfHxwcm9mZXNzaW9uYWwlMjBidXNpbmVzcyUyMHBvcnRyYWl0JTIwaGVhZHNob3R8ZW58MHx8fHwxNzc2MTk5MzUyfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Sales representative profile picture"
+      }
+    ],
+    "icons": "lucide-react"
+  },
+  "testing": {
+    "rule": "All interactive elements (buttons, inputs, tabs, table rows acting as links) MUST have a data-testid attribute in kebab-case."
+  },
+  "instructions_to_main_agent": [
+    "Build the application using React (.js files, not .tsx). Use standard Tailwind CSS.",
+    "Implement a Mobile-first view for the Sales roles: Sales Dashboard, Lead List, Add Lead form, Lead Details, Post Call form, and Follow-up screens. Ensure sticky bottom or top nav for mobile feel.",
+    "Implement a Data-Dense Desktop view for Admin roles: Dashboard metrics, Leads table, Call sessions, Recordings (with audio playback UI), and Performance grids.",
+    "Use Shadcn UI for structured components. Customize Shadcn spacing to fit the Archetype 4 'Swiss' layout (tight, sharp, flat).",
+    "Never use generic placeholder text; implement empty states with gray icons and descriptive text.",
+    "Manage role-based routing natively: simulate login state that directs user to '/sales' or '/admin' trees.",
+    "Include hover states (e.g., hover:bg-gray-100) and focus states (focus:ring-2 focus:ring-black) for accessibility."
+  ]
+}
