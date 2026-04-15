@@ -18,7 +18,7 @@ function RootNavigator() {
 
     if (!user && inApp) {
       router.replace('/');
-    } else if (user && !inApp && segments[0] !== 'lead' && segments[0] !== 'add-lead' && segments[0] !== 'post-call' && segments[0] !== 'signup') {
+    } else if (user && !inApp && segments[0] !== 'lead' && segments[0] !== 'add-lead' && segments[0] !== 'post-call' && segments[0] !== 'signup' && segments[0] !== 'forgot-password') {
       if (user.role === 'admin') {
         router.replace('/admin');
       } else {
@@ -42,6 +42,11 @@ function RootNavigator() {
         <Stack.Screen name="index" />
         <Stack.Screen name="signup" options={{
           headerShown: true, title: 'Sign Up',
+          headerStyle: { backgroundColor: Colors.surface },
+          headerTintColor: Colors.text,
+        }} />
+        <Stack.Screen name="forgot-password" options={{
+          headerShown: true, title: 'Reset Password',
           headerStyle: { backgroundColor: Colors.surface },
           headerTintColor: Colors.text,
         }} />

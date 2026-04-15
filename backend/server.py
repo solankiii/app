@@ -129,6 +129,14 @@ class LeadUpdate(BaseModel):
 class UserRoleUpdate(BaseModel):
     role: str  # "admin" or "sales"
 
+class ResetPasswordRequest(BaseModel):
+    user_id: str
+    new_password: str
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
 class CallSessionCreate(BaseModel):
     lead_id: str
     dialed_number: str
@@ -201,6 +209,36 @@ async def register(req: RegisterRequest):
 @api_router.get("/auth/me")
 async def get_me(request: Request):
     return await get_current_user(request)
+
+@api_router.post("/auth/reset-password")
+async def reset_password(req: ResetPasswordRequest, request: Request):
+    """Admin resets any user's password."""
+    await require_admin(request)
+    if len(req.new_password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    target = await db.users.find_one({"id": req.user_id})
+    if not target:
+        raise HTTPException(404, "User not found")
+    await db.users.update_one(
+        {"id": req.user_id},
+        {"$set": {"password_hash": hash_password(req.new_password), "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    return {"message": "Password reset successfully"}
+
+@api_router.post("/auth/change-password")
+async def change_password(req: ChangePasswordRequest, request: Request):
+    """User changes their own password."""
+    user = await get_current_user(request)
+    full_user = await db.users.find_one({"id": user["id"]})
+    if not verify_password(req.current_password, full_user.get("password_hash", "")):
+        raise HTTPException(400, "Current password is incorrect")
+    if len(req.new_password) < 6:
+        raise HTTPException(400, "New password must be at least 6 characters")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"password_hash": hash_password(req.new_password), "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    return {"message": "Password changed successfully"}
 
 
 # ─── Users Routes ────────────────────────────────────────────────────

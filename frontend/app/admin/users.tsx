@@ -51,6 +51,44 @@ export default function UsersScreen() {
     );
   };
 
+  const resetPassword = (userId: string, userName: string) => {
+    Alert.prompt
+      ? Alert.prompt(
+          'Reset Password',
+          `Enter new password for ${userName}`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Reset', onPress: async (newPw?: string) => {
+                if (!newPw || newPw.length < 6) {
+                  Alert.alert('Error', 'Password must be at least 6 characters');
+                  return;
+                }
+                try {
+                  await api.post('/auth/reset-password', { user_id: userId, new_password: newPw });
+                  Alert.alert('Success', `Password reset for ${userName}`);
+                } catch (e: any) {
+                  Alert.alert('Error', e.response?.data?.detail || 'Failed to reset password');
+                }
+              }
+            }
+          ],
+          'secure-text'
+        )
+      : // Web/Android fallback - use simple prompt
+        (() => {
+          const newPw = prompt(`Enter new password for ${userName} (min 6 chars):`);
+          if (!newPw) return;
+          if (newPw.length < 6) {
+            Alert.alert('Error', 'Password must be at least 6 characters');
+            return;
+          }
+          api.post('/auth/reset-password', { user_id: userId, new_password: newPw })
+            .then(() => Alert.alert('Success', `Password reset for ${userName}`))
+            .catch((e: any) => Alert.alert('Error', e.response?.data?.detail || 'Failed to reset password'));
+        })();
+  };
+
   const renderUser = ({ item }: { item: any }) => {
     const isSelf = item.id === currentUser?.id;
     return (
@@ -72,17 +110,25 @@ export default function UsersScreen() {
             </Text>
           </View>
           {!isSelf && (
-            <TouchableOpacity
-              style={styles.toggleBtn}
-              onPress={() => toggleRole(item.id, item.role)}
-              disabled={updating === item.id}
-            >
-              {updating === item.id ? (
-                <ActivityIndicator size="small" color={Colors.primary} />
-              ) : (
-                <Ionicons name="swap-horizontal" size={18} color={Colors.primary} />
-              )}
-            </TouchableOpacity>
+            <View style={styles.btnRow}>
+              <TouchableOpacity
+                style={styles.toggleBtn}
+                onPress={() => resetPassword(item.id, item.full_name)}
+              >
+                <Ionicons name="key-outline" size={16} color={Colors.warning} />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.toggleBtn}
+                onPress={() => toggleRole(item.id, item.role)}
+                disabled={updating === item.id}
+              >
+                {updating === item.id ? (
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                ) : (
+                  <Ionicons name="swap-horizontal" size={18} color={Colors.primary} />
+                )}
+              </TouchableOpacity>
+            </View>
           )}
         </View>
       </View>
@@ -132,6 +178,7 @@ const styles = StyleSheet.create({
   roleText: { fontSize: 10, fontWeight: '700' },
   adminText: { color: '#DC2626' },
   salesText: { color: '#059669' },
+  btnRow: { flexDirection: 'row', gap: 6 },
   toggleBtn: {
     padding: 4, borderRadius: 6,
     backgroundColor: Colors.background,
