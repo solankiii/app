@@ -1016,7 +1016,7 @@ app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
+    allow_credentials=("*" not in ALLOWED_ORIGINS),
     allow_methods=["*"],
     allow_headers=["*"],
 )
