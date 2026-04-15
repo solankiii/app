@@ -18,7 +18,7 @@ export default function AddLead() {
   const [salesUsers, setSalesUsers] = useState<any[]>([]);
   const [form, setForm] = useState({
     full_name: '', phone_number: '', alternate_phone: '',
-    company_name: '', source: 'direct', city: '',
+    company_name: '', source: 'direct', industry: '', city: '',
     assigned_to: '', notes: '',
   });
 
@@ -36,6 +36,7 @@ export default function AddLead() {
       await api.post('/leads', {
         ...form,
         assigned_to: form.assigned_to || undefined,
+        industry: form.industry || undefined,
         notes: form.notes || undefined,
       });
       Alert.alert('Success', 'Lead created successfully');
@@ -89,6 +90,11 @@ export default function AddLead() {
               </TouchableOpacity>
             ))}
           </View>
+        </View>
+        <View style={styles.field}>
+          <Text style={styles.label}>Industry</Text>
+          <TextInput style={styles.input} value={form.industry}
+            onChangeText={v => update('industry', v)} placeholder="e.g. Technology, Finance, Healthcare" />
         </View>
         <View style={styles.field}>
           <Text style={styles.label}>City</Text>

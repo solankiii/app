@@ -22,4 +22,12 @@ config.cacheStores = [
 // Reduce the number of workers to decrease resource usage
 config.maxWorkers = 2;
 
+// Fix css-tree directory import resolution (required by react-native-svg)
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (moduleName === './syntax' && context.originModulePath.includes('css-tree')) {
+    return context.resolveRequest(context, './syntax/index.js', platform);
+  }
+  return context.resolveRequest(context, moduleName, platform);
+};
+
 module.exports = config;

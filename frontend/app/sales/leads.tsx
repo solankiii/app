@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList,
   StyleSheet, RefreshControl, ActivityIndicator,
@@ -17,14 +17,21 @@ export default function LeadsScreen() {
   const [leads, setLeads] = useState<any[]>([]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [industryFilter, setIndustryFilter] = useState('all');
+  const [industries, setIndustries] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    api.get('/leads/industries').then(r => setIndustries(r.data || [])).catch(() => {});
+  }, []);
 
   const loadLeads = async () => {
     try {
       const params: any = {};
       if (search) params.search = search;
       if (statusFilter !== 'all') params.status = statusFilter;
+      if (industryFilter !== 'all') params.industry = industryFilter;
       const res = await api.get('/leads', { params });
       setLeads(res.data.leads || []);
     } catch (e) {
@@ -34,7 +41,7 @@ export default function LeadsScreen() {
     }
   };
 
-  useFocusEffect(useCallback(() => { loadLeads(); }, [search, statusFilter]));
+  useFocusEffect(useCallback(() => { loadLeads(); }, [search, statusFilter, industryFilter]));
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -60,6 +67,12 @@ export default function LeadsScreen() {
         <Text style={styles.leadCompany}>{item.company_name}</Text>
       ) : null}
       <View style={styles.leadMeta}>
+        {item.industry ? (
+          <View style={styles.metaItem}>
+            <Ionicons name="business-outline" size={12} color={Colors.accent} />
+            <Text style={[styles.metaText, { color: Colors.accent }]}>{item.industry}</Text>
+          </View>
+        ) : null}
         {item.city ? (
           <View style={styles.metaItem}>
             <Ionicons name="location-outline" size={12} color={Colors.textMuted} />
@@ -89,6 +102,7 @@ export default function LeadsScreen() {
           placeholderTextColor={Colors.textMuted}
         />
       </View>
+      {/* Status filter */}
       <FlatList
         horizontal
         data={STATUSES}
@@ -108,6 +122,27 @@ export default function LeadsScreen() {
           </TouchableOpacity>
         )}
       />
+      {/* Industry filter */}
+      {industries.length > 0 && (
+        <FlatList
+          horizontal
+          data={['all', ...industries]}
+          keyExtractor={(item) => item}
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterRow2}
+          contentContainerStyle={styles.filterContent}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={[styles.filterChip, styles.industryChip, industryFilter === item && styles.filterChipActive]}
+              onPress={() => setIndustryFilter(item)}
+            >
+              <Text style={[styles.filterText, industryFilter === item && styles.filterTextActive]}>
+                {item === 'all' ? 'All Industries' : item}
+              </Text>
+            </TouchableOpacity>
+          )}
+        />
+      )}
       {loading ? (
         <ActivityIndicator size="large" color={Colors.primary} style={{ marginTop: 40 }} />
       ) : (
@@ -144,15 +179,17 @@ const styles = StyleSheet.create({
   },
   searchInput: { flex: 1, fontSize: 14, color: Colors.text },
   filterRow: { maxHeight: 44, marginTop: 12 },
+  filterRow2: { maxHeight: 44, marginTop: 4 },
   filterContent: { paddingHorizontal: 16, gap: 8 },
   filterChip: {
     paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16,
     backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
   },
+  industryChip: { borderStyle: 'dashed' as any },
   filterChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   filterText: { fontSize: 12, fontWeight: '500', color: Colors.textMuted },
   filterTextActive: { color: '#FFFFFF' },
-  list: { padding: 16, paddingBottom: 80 },
+  list: { padding: 16, paddingBottom: 140 },
   leadCard: {
     backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
     borderRadius: 8, padding: 14, marginBottom: 10,
@@ -162,11 +199,11 @@ const styles = StyleSheet.create({
   leadName: { fontSize: 15, fontWeight: '600', color: Colors.text },
   leadPhone: { fontSize: 13, color: Colors.textMuted, marginTop: 2 },
   leadCompany: { fontSize: 13, color: Colors.textMuted, marginTop: 4 },
-  leadMeta: { flexDirection: 'row', gap: 16, marginTop: 8 },
+  leadMeta: { flexDirection: 'row', gap: 16, marginTop: 8, flexWrap: 'wrap' },
   metaItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   metaText: { fontSize: 11, color: Colors.textMuted },
   fab: {
-    position: 'absolute', bottom: 16, right: 16,
+    position: 'absolute', bottom: 80, right: 16,
     width: 56, height: 56, borderRadius: 28,
     backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
     elevation: 4,

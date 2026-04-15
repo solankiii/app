@@ -1,9 +1,11 @@
+// AHM Brand Palette — Ace House Media
 export const Colors = {
-  background: '#FAFAFA',
+  background: '#FAFAF8',
   surface: '#FFFFFF',
-  primary: '#0A0A0A',
-  primaryHover: '#262626',
-  text: '#111827',
+  primary: '#0D3B2E',       // brand dark green
+  primaryHover: '#0A2E24',
+  accent: '#4A1A1A',        // brand maroon
+  text: '#0A0A0A',
   textMuted: '#6B7280',
   border: '#E5E7EB',
   success: '#10B981',

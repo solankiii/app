@@ -1,15 +1,17 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ActivityIndicator, Alert,
+  KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
 import { Colors } from '@/src/constants/colors';
 
 export default function LoginScreen() {
   const { login } = useAuth();
+  const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -42,9 +44,9 @@ export default function LoginScreen() {
         <View style={styles.container}>
           <View style={styles.header}>
             <View style={styles.logoBox}>
-              <Ionicons name="call" size={28} color="#FFFFFF" />
+              <Text style={styles.logoText}>ah</Text>
             </View>
-            <Text style={styles.title}>Sales CRM</Text>
+            <Text style={styles.title}>AHM Sales CRM</Text>
             <Text style={styles.subtitle}>Sign in to your account</Text>
           </View>
 
@@ -109,9 +111,10 @@ export default function LoginScreen() {
           </View>
 
           <View style={styles.footer}>
-            <Text style={styles.footerText}>Demo Credentials</Text>
-            <Text style={styles.footerCred}>Admin: admin@salescrm.com / admin123</Text>
-            <Text style={styles.footerCred}>Sales: rahul@salescrm.com / sales123</Text>
+            <Text style={styles.footerText}>Don't have an account?</Text>
+            <TouchableOpacity onPress={() => router.push('/signup')}>
+              <Text style={styles.footerLink}> Sign Up</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </KeyboardAvoidingView>
@@ -125,9 +128,13 @@ const styles = StyleSheet.create({
   container: { flex: 1, justifyContent: 'center', paddingHorizontal: 24 },
   header: { alignItems: 'center', marginBottom: 40 },
   logoBox: {
-    width: 56, height: 56, borderRadius: 14,
+    width: 64, height: 64, borderRadius: 16,
     backgroundColor: Colors.primary, alignItems: 'center', justifyContent: 'center',
     marginBottom: 16,
+  },
+  logoText: {
+    fontSize: 28, fontWeight: '300', color: '#FFFFFF',
+    fontStyle: 'italic', letterSpacing: -1,
   },
   title: { fontSize: 28, fontWeight: '700', color: Colors.text },
   subtitle: { fontSize: 14, color: Colors.textMuted, marginTop: 4 },
@@ -152,9 +159,10 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.6 },
   buttonText: { color: '#FFFFFF', fontSize: 15, fontWeight: '600' },
   footer: {
-    alignItems: 'center', marginTop: 48, paddingTop: 24,
+    flexDirection: 'row', justifyContent: 'center', alignItems: 'center',
+    marginTop: 48, paddingTop: 24,
     borderTopWidth: 1, borderTopColor: Colors.border,
   },
-  footerText: { fontSize: 12, fontWeight: '600', color: Colors.textMuted, marginBottom: 4 },
-  footerCred: { fontSize: 11, color: Colors.textMuted },
+  footerText: { fontSize: 13, color: Colors.textMuted },
+  footerLink: { fontSize: 13, fontWeight: '600', color: Colors.primary },
 });

@@ -18,7 +18,7 @@ function RootNavigator() {
 
     if (!user && inApp) {
       router.replace('/');
-    } else if (user && !inApp && segments[0] !== 'lead' && segments[0] !== 'add-lead' && segments[0] !== 'post-call') {
+    } else if (user && !inApp && segments[0] !== 'lead' && segments[0] !== 'add-lead' && segments[0] !== 'post-call' && segments[0] !== 'signup') {
       if (user.role === 'admin') {
         router.replace('/admin');
       } else {
@@ -40,6 +40,11 @@ function RootNavigator() {
       <StatusBar style="dark" />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: Colors.background } }}>
         <Stack.Screen name="index" />
+        <Stack.Screen name="signup" options={{
+          headerShown: true, title: 'Sign Up',
+          headerStyle: { backgroundColor: Colors.surface },
+          headerTintColor: Colors.text,
+        }} />
         <Stack.Screen name="sales" />
         <Stack.Screen name="admin" />
         <Stack.Screen name="add-lead" options={{

@@ -16,12 +16,14 @@ interface AuthContextType {
   loading: boolean;
   token: string | null;
   login: (email: string, password: string) => Promise<User>;
+  signup: (full_name: string, email: string, password: string, phone?: string) => Promise<User>;
   logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
   user: null, loading: true, token: null,
   login: async () => { throw new Error('Not implemented'); },
+  signup: async () => { throw new Error('Not implemented'); },
   logout: async () => {},
 });
 
@@ -64,6 +66,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return userData;
   };
 
+  const signup = async (full_name: string, email: string, password: string, phone?: string): Promise<User> => {
+    const res = await api.post('/auth/register', { full_name, email, password, phone: phone || null });
+    const { user: userData, access_token } = res.data;
+    await AsyncStorage.setItem('auth_token', access_token);
+    setUser(userData);
+    setToken(access_token);
+    return userData;
+  };
+
   const logout = async () => {
     await AsyncStorage.removeItem('auth_token');
     setUser(null);
@@ -71,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, loading, token, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, token, login, signup, logout }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,11 +1,11 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
-  Alert, ActivityIndicator, RefreshControl,
+  Alert, ActivityIndicator, RefreshControl, Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
-import * as DocumentPicker from 'expo-document-picker';
+import { Audio } from 'expo-av';
 import { Colors } from '@/src/constants/colors';
 import api from '@/src/api/client';
 
@@ -14,6 +14,40 @@ export default function SyncScreen() {
   const [uploading, setUploading] = useState(false);
   const [pendingSessions, setPendingSessions] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Recording state
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingInstance, setRecordingInstance] = useState<Audio.Recording | null>(null);
+  const [recordingSessionId, setRecordingSessionId] = useState<string | null>(null);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (recordingInstance) {
+        recordingInstance.stopAndUnloadAsync().catch(() => {});
+      }
+    };
+  }, [recordingInstance]);
+
+  // Pulse animation for recording dot
+  useEffect(() => {
+    if (isRecording) {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 0.3, duration: 600, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+        ])
+      );
+      loop.start();
+      return () => loop.stop();
+    } else {
+      pulseAnim.setValue(1);
+    }
+  }, [isRecording]);
 
   const loadPending = async () => {
     try {
@@ -30,32 +64,101 @@ export default function SyncScreen() {
 
   const onRefresh = async () => { setRefreshing(true); await loadPending(); setRefreshing(false); };
 
-  const pickAndUpload = async (sessionId: string) => {
+  const formatDuration = (seconds: number) => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
+  const startRecording = async (sessionId: string) => {
     try {
-      const result = await DocumentPicker.getDocumentAsync({
-        type: 'audio/*',
-        copyToCacheDirectory: true,
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Required', 'Microphone access is needed to record audio.');
+        return;
+      }
+
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
       });
-      if (result.canceled || !result.assets?.length) return;
-      const file = result.assets[0];
+
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
+
+      setRecordingInstance(recording);
+      setRecordingSessionId(sessionId);
+      setIsRecording(true);
+      setRecordingDuration(0);
+
+      timerRef.current = setInterval(() => {
+        setRecordingDuration(prev => prev + 1);
+      }, 1000);
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to start recording');
+    }
+  };
+
+  const stopAndUpload = async () => {
+    if (!recordingInstance || !recordingSessionId) return;
+
+    try {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+
+      await recordingInstance.stopAndUnloadAsync();
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+
+      const uri = recordingInstance.getURI();
+      if (!uri) {
+        Alert.alert('Error', 'Recording file not found');
+        return;
+      }
+
+      setIsRecording(false);
       setUploading(true);
+
       const formData = new FormData();
-      formData.append('call_session_id', sessionId);
+      formData.append('call_session_id', recordingSessionId);
       formData.append('file', {
-        uri: file.uri,
-        name: file.name || 'recording.mp3',
-        type: file.mimeType || 'audio/mpeg',
+        uri,
+        name: 'recording.m4a',
+        type: 'audio/mp4',
       } as any);
+
       await api.post('/recordings/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
+
       Alert.alert('Success', 'Recording uploaded!');
       loadPending();
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Upload failed');
     } finally {
+      setRecordingInstance(null);
+      setRecordingSessionId(null);
+      setRecordingDuration(0);
       setUploading(false);
     }
+  };
+
+  const cancelRecording = async () => {
+    if (!recordingInstance) return;
+    try {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      await recordingInstance.stopAndUnloadAsync();
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+    } catch (_) {}
+    setRecordingInstance(null);
+    setRecordingSessionId(null);
+    setRecordingDuration(0);
+    setIsRecording(false);
   };
 
   return (
@@ -71,7 +174,7 @@ export default function SyncScreen() {
         <View style={styles.infoTextWrap}>
           <Text style={styles.infoTitle}>Recording Sync</Text>
           <Text style={styles.infoText}>
-            Match audio recordings from your device to pending call sessions. Tap a session below to attach a recording file.
+            Tap "Record" on a pending session, speak into your microphone, then tap "Stop & Upload" to sync.
           </Text>
         </View>
       </View>
@@ -94,26 +197,55 @@ export default function SyncScreen() {
           <Text style={styles.emptyMsg}>No pending recordings to upload</Text>
         </View>
       ) : (
-        pendingSessions.map(session => (
-          <View key={session.id} style={styles.sessionCard}>
-            <View style={styles.sessionInfo}>
-              <Text style={styles.sessionLead}>{session.lead_name}</Text>
-              <Text style={styles.sessionPhone}>{session.dialed_number}</Text>
-              <Text style={styles.sessionDate}>
-                {new Date(session.call_started_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-              </Text>
+        pendingSessions.map(session => {
+          const isActiveSession = isRecording && recordingSessionId === session.id;
+
+          return (
+            <View key={session.id} style={styles.sessionCard}>
+              <View style={styles.sessionInfo}>
+                <Text style={styles.sessionLead}>{session.lead_name}</Text>
+                <Text style={styles.sessionPhone}>{session.dialed_number}</Text>
+                <Text style={styles.sessionDate}>
+                  {new Date(session.call_started_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                </Text>
+              </View>
+
+              {isActiveSession ? (
+                <View style={styles.recordingControls}>
+                  <View style={styles.recordingRow}>
+                    <Animated.View style={[styles.recordingDot, { opacity: pulseAnim }]} />
+                    <Text style={styles.durationText}>{formatDuration(recordingDuration)}</Text>
+                  </View>
+                  <View style={styles.recordingActions}>
+                    <TouchableOpacity
+                      style={styles.stopBtn}
+                      onPress={stopAndUpload}
+                    >
+                      <Ionicons name="stop-circle" size={16} color="#FFFFFF" />
+                      <Text style={styles.stopBtnText}>Stop & Upload</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={styles.cancelBtn}
+                      onPress={cancelRecording}
+                    >
+                      <Ionicons name="close" size={16} color={Colors.textMuted} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <TouchableOpacity
+                  testID={`record-btn-${session.id}`}
+                  style={styles.recordBtn}
+                  onPress={() => startRecording(session.id)}
+                  disabled={isRecording || uploading}
+                >
+                  <Ionicons name="mic" size={18} color="#FFFFFF" />
+                  <Text style={styles.recordBtnText}>Record</Text>
+                </TouchableOpacity>
+              )}
             </View>
-            <TouchableOpacity
-              testID={`upload-recording-${session.id}`}
-              style={styles.uploadBtn}
-              onPress={() => pickAndUpload(session.id)}
-              disabled={uploading}
-            >
-              <Ionicons name="cloud-upload" size={18} color="#FFFFFF" />
-              <Text style={styles.uploadText}>Upload</Text>
-            </TouchableOpacity>
-          </View>
-        ))
+          );
+        })
       )}
     </ScrollView>
   );
@@ -147,12 +279,29 @@ const styles = StyleSheet.create({
   sessionLead: { fontSize: 14, fontWeight: '600', color: Colors.text },
   sessionPhone: { fontSize: 13, color: Colors.textMuted, marginTop: 2 },
   sessionDate: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
-  uploadBtn: {
+  recordBtn: {
     flexDirection: 'row', alignItems: 'center', gap: 6,
     backgroundColor: Colors.primary, paddingHorizontal: 14, paddingVertical: 8,
     borderRadius: 6,
   },
-  uploadText: { color: '#FFFFFF', fontSize: 13, fontWeight: '500' },
+  recordBtnText: { color: '#FFFFFF', fontSize: 13, fontWeight: '500' },
+  recordingControls: { alignItems: 'flex-end', gap: 6 },
+  recordingRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  recordingDot: {
+    width: 10, height: 10, borderRadius: 5, backgroundColor: '#EF4444',
+  },
+  durationText: { fontSize: 14, fontWeight: '700', color: '#EF4444' },
+  recordingActions: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  stopBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: '#EF4444', paddingHorizontal: 10, paddingVertical: 6,
+    borderRadius: 6,
+  },
+  stopBtnText: { color: '#FFFFFF', fontSize: 12, fontWeight: '500' },
+  cancelBtn: {
+    padding: 6, borderRadius: 6,
+    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
+  },
   emptyBox: { alignItems: 'center', paddingVertical: 40 },
   emptyTitle: { fontSize: 16, fontWeight: '600', color: Colors.text, marginTop: 12 },
   emptyMsg: { fontSize: 13, color: Colors.textMuted, marginTop: 4 },

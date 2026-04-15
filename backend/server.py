@@ -6,6 +6,8 @@ load_dotenv(ROOT_DIR / '.env')
 
 from fastapi import FastAPI, APIRouter, Request, HTTPException, File, UploadFile, Form
 from fastapi.responses import Response
+import csv
+import io
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
@@ -19,15 +21,32 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 # ─── Setup ───────────────────────────────────────────────────────────
+import certifi
 mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
+client = AsyncIOMotorClient(mongo_url, tlsCAFile=certifi.where())
 db = client[os.environ.get('DB_NAME', 'sales_crm')]
 
 JWT_SECRET = os.environ.get('JWT_SECRET', 'default-dev-jwt-secret')
 JWT_ALGORITHM = "HS256"
 
-app = FastAPI(title="Sales CRM API")
+ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+
+app = FastAPI(title="AHM Sales CRM API")
 api_router = APIRouter(prefix="/api")
+
+
+@app.get("/health")
+async def health():
+    try:
+        await db.command("ping")
+        db_status = "connected"
+    except Exception:
+        db_status = "disconnected"
+    return {
+        "status": "ok",
+        "database": db_status,
+        "environment": os.environ.get("RENDER", "local"),
+    }
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -78,12 +97,19 @@ class LoginRequest(BaseModel):
     email: str
     password: str
 
+class RegisterRequest(BaseModel):
+    full_name: str
+    email: str
+    password: str
+    phone: Optional[str] = None
+
 class LeadCreate(BaseModel):
     full_name: str
     phone_number: str
     alternate_phone: Optional[str] = None
     company_name: Optional[str] = None
     source: str = "direct"
+    industry: Optional[str] = None
     city: Optional[str] = None
     assigned_to: Optional[str] = None
     notes: Optional[str] = None
@@ -94,10 +120,14 @@ class LeadUpdate(BaseModel):
     alternate_phone: Optional[str] = None
     company_name: Optional[str] = None
     source: Optional[str] = None
+    industry: Optional[str] = None
     city: Optional[str] = None
     assigned_to: Optional[str] = None
     notes: Optional[str] = None
     status: Optional[str] = None
+
+class UserRoleUpdate(BaseModel):
+    role: str  # "admin" or "sales"
 
 class CallSessionCreate(BaseModel):
     lead_id: str
@@ -141,6 +171,33 @@ async def login(req: LoginRequest):
     user_data = {k: v for k, v in user.items() if k != "password_hash"}
     return {"user": user_data, "access_token": token}
 
+@api_router.post("/auth/register")
+async def register(req: RegisterRequest):
+    email = req.email.lower().strip()
+    if not req.full_name.strip():
+        raise HTTPException(400, "Full name is required")
+    if len(req.password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    existing = await db.users.find_one({"email": email})
+    if existing:
+        raise HTTPException(409, "An account with this email already exists")
+    now = datetime.now(timezone.utc).isoformat()
+    user = {
+        "id": str(uuid.uuid4()),
+        "full_name": req.full_name.strip(),
+        "email": email,
+        "phone": req.phone,
+        "role": "sales",
+        "is_active": True,
+        "password_hash": hash_password(req.password),
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.users.insert_one(user)
+    token = create_access_token(user["id"], user["email"], user["role"])
+    user_data = {k: v for k, v in user.items() if k not in ("password_hash", "_id")}
+    return {"user": user_data, "access_token": token}
+
 @api_router.get("/auth/me")
 async def get_me(request: Request):
     return await get_current_user(request)
@@ -157,13 +214,32 @@ async def list_sales_users(request: Request):
     await get_current_user(request)
     return await db.users.find({"role": "sales"}, {"_id": 0, "password_hash": 0}).to_list(100)
 
+@api_router.patch("/users/{user_id}/role")
+async def update_user_role(user_id: str, req: UserRoleUpdate, request: Request):
+    await require_admin(request)
+    if req.role not in ("admin", "sales"):
+        raise HTTPException(400, "Role must be 'admin' or 'sales'")
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(404, "User not found")
+    await db.users.update_one({"id": user_id}, {"$set": {"role": req.role, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    updated = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    return updated
+
 
 # ─── Leads Routes ────────────────────────────────────────────────────
+@api_router.get("/leads/industries")
+async def list_industries(request: Request):
+    await get_current_user(request)
+    industries = await db.leads.distinct("industry")
+    return [i for i in industries if i]
+
 @api_router.get("/leads")
 async def list_leads(
     request: Request,
     status: Optional[str] = None,
     source: Optional[str] = None,
+    industry: Optional[str] = None,
     assigned_to: Optional[str] = None,
     search: Optional[str] = None,
     limit: int = 50, skip: int = 0
@@ -176,13 +252,16 @@ async def list_leads(
         query["status"] = status
     if source:
         query["source"] = source
+    if industry:
+        query["industry"] = industry
     if assigned_to and user["role"] == "admin":
         query["assigned_to"] = assigned_to
     if search:
         query["$or"] = [
             {"full_name": {"$regex": search, "$options": "i"}},
             {"phone_number": {"$regex": search, "$options": "i"}},
-            {"company_name": {"$regex": search, "$options": "i"}}
+            {"company_name": {"$regex": search, "$options": "i"}},
+            {"industry": {"$regex": search, "$options": "i"}}
         ]
     leads = await db.leads.find(query, {"_id": 0}).sort("created_at", -1).skip(skip).limit(limit).to_list(limit)
     total = await db.leads.count_documents(query)
@@ -232,6 +311,7 @@ async def create_lead(req: LeadCreate, request: Request):
         "alternate_phone": req.alternate_phone,
         "company_name": req.company_name,
         "source": req.source,
+        "industry": req.industry,
         "status": "new",
         "assigned_to": req.assigned_to or user["id"],
         "city": req.city,
@@ -254,6 +334,61 @@ async def create_lead(req: LeadCreate, request: Request):
         "created_at": now
     })
     return lead
+
+@api_router.post("/leads/upload-csv")
+async def upload_leads_csv(request: Request, file: UploadFile = File(...), assigned_to: Optional[str] = Form(None)):
+    user = await require_admin(request)
+    contents = await file.read()
+    text = contents.decode("utf-8-sig")
+    reader = csv.DictReader(io.StringIO(text))
+    now = datetime.now(timezone.utc).isoformat()
+    created = 0
+    skipped = 0
+    errors = []
+    for idx, row in enumerate(reader, start=2):
+        name = (row.get("full_name") or row.get("name") or row.get("Full Name") or "").strip()
+        phone = (row.get("phone_number") or row.get("phone") or row.get("Phone") or row.get("Phone Number") or "").strip()
+        if not name or not phone:
+            skipped += 1
+            errors.append(f"Row {idx}: missing name or phone")
+            continue
+        lead = {
+            "id": str(uuid.uuid4()),
+            "full_name": name,
+            "phone_number": phone,
+            "alternate_phone": (row.get("alternate_phone") or row.get("Alternate Phone") or "").strip() or None,
+            "company_name": (row.get("company_name") or row.get("company") or row.get("Company") or "").strip() or None,
+            "source": (row.get("source") or row.get("Source") or "direct").strip(),
+            "industry": (row.get("industry") or row.get("Industry") or "").strip() or None,
+            "city": (row.get("city") or row.get("City") or "").strip() or None,
+            "status": "new",
+            "assigned_to": assigned_to or None,
+            "notes": (row.get("notes") or row.get("Notes") or "").strip() or None,
+            "created_by": user["id"],
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db.leads.insert_one(lead)
+        created += 1
+    return {"created": created, "skipped": skipped, "errors": errors[:20]}
+
+@api_router.post("/leads/bulk-assign")
+async def bulk_assign_leads(request: Request):
+    await require_admin(request)
+    body = await request.json()
+    lead_ids = body.get("lead_ids", [])
+    assigned_to = body.get("assigned_to")
+    if not lead_ids or not assigned_to:
+        raise HTTPException(400, "lead_ids and assigned_to are required")
+    target = await db.users.find_one({"id": assigned_to})
+    if not target:
+        raise HTTPException(404, "Target user not found")
+    now = datetime.now(timezone.utc).isoformat()
+    result = await db.leads.update_many(
+        {"id": {"$in": lead_ids}},
+        {"$set": {"assigned_to": assigned_to, "updated_at": now}}
+    )
+    return {"updated": result.modified_count}
 
 @api_router.get("/leads/{lead_id}")
 async def get_lead(lead_id: str, request: Request):
@@ -704,6 +839,12 @@ async def startup():
         })
         logger.info(f"Admin seeded: {admin_email}")
 
+    # Ensure abhinavsolanki008@gmail.com is admin
+    abhinav = await db.users.find_one({"email": "abhinavsolanki008@gmail.com"})
+    if abhinav and abhinav.get("role") != "admin":
+        await db.users.update_one({"email": "abhinavsolanki008@gmail.com"}, {"$set": {"role": "admin"}})
+        logger.info("Promoted abhinavsolanki008@gmail.com to admin")
+
     # Seed sales users
     for name, email in [("Rahul Sharma", "rahul@salescrm.com"), ("Priya Patel", "priya@salescrm.com")]:
         if not await db.users.find_one({"email": email}):
@@ -721,37 +862,26 @@ async def startup():
         sales_users = await db.users.find({"role": "sales"}, {"_id": 0}).to_list(10)
         if sales_users:
             samples = [
-                ("Amit Kumar", "+919876543210", "Tech Solutions", "Mumbai", "website"),
-                ("Sneha Reddy", "+919876543211", "Digital Mart", "Hyderabad", "referral"),
-                ("Vikram Singh", "+919876543212", "BuildCo", "Delhi", "cold_call"),
-                ("Anita Desai", "+919876543213", "Green Energy", "Pune", "website"),
-                ("Rajesh Nair", "+919876543214", "Marine Exports", "Kochi", "trade_show"),
+                ("Amit Kumar", "+919876543210", "Tech Solutions", "Mumbai", "website", "Technology"),
+                ("Sneha Reddy", "+919876543211", "Digital Mart", "Hyderabad", "referral", "E-commerce"),
+                ("Vikram Singh", "+919876543212", "BuildCo", "Delhi", "cold_call", "Construction"),
+                ("Anita Desai", "+919876543213", "Green Energy", "Pune", "website", "Energy"),
+                ("Rajesh Nair", "+919876543214", "Marine Exports", "Kochi", "trade_show", "Logistics"),
             ]
             statuses = ["new", "contacted", "interested", "follow_up", "new"]
             now = datetime.now(timezone.utc).isoformat()
-            for idx, (name, phone, company, city, source) in enumerate(samples):
+            for idx, (name, phone, company, city, source, industry) in enumerate(samples):
                 assigned = sales_users[idx % len(sales_users)]
                 await db.leads.insert_one({
                     "id": str(uuid.uuid4()), "full_name": name,
                     "phone_number": phone, "alternate_phone": None,
                     "company_name": company, "source": source,
+                    "industry": industry,
                     "status": statuses[idx], "assigned_to": assigned["id"],
                     "city": city, "notes": None, "created_by": assigned["id"],
                     "created_at": now, "updated_at": now
                 })
             logger.info("Sample leads seeded")
-
-    # Write test credentials
-    creds_path = Path("/app/memory")
-    creds_path.mkdir(parents=True, exist_ok=True)
-    with open(creds_path / "test_credentials.md", "w") as f:
-        f.write("# Test Credentials\n\n")
-        f.write("## Admin\n- Email: admin@salescrm.com\n- Password: admin123\n- Role: admin\n\n")
-        f.write("## Sales User 1\n- Email: rahul@salescrm.com\n- Password: sales123\n- Role: sales\n\n")
-        f.write("## Sales User 2\n- Email: priya@salescrm.com\n- Password: sales123\n- Role: sales\n\n")
-        f.write("## API Endpoints\n- POST /api/auth/login\n- GET /api/auth/me\n- GET /api/leads\n- POST /api/leads\n")
-        f.write("- GET /api/leads/{id}\n- PUT /api/leads/{id}\n- POST /api/call-sessions\n- PUT /api/call-sessions/{id}\n")
-        f.write("- GET /api/follow-ups\n- POST /api/follow-ups\n- GET /api/dashboard/sales\n- GET /api/dashboard/admin\n")
 
     logger.info("Startup complete")
 
@@ -765,7 +895,7 @@ async def shutdown():
 app.include_router(api_router)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
