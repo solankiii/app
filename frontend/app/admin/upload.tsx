@@ -59,7 +59,7 @@ export default function UploadLeadsScreen() {
       }
 
       const res = await api.post('/leads/upload-csv', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+        headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
         timeout: 60000,
       });
       setResult(res.data);

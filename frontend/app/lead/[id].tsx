@@ -1,12 +1,13 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
   RefreshControl, ActivityIndicator, Alert, Linking, TextInput, Modal,
-  Platform, Animated,
+  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Audio } from 'expo-av';
+import * as DocumentPicker from 'expo-document-picker';
 import { Colors } from '@/src/constants/colors';
 import StatusBadge from '@/src/components/StatusBadge';
 import api from '@/src/api/client';
@@ -29,89 +30,73 @@ export default function LeadDetail() {
   const [fuType, setFuType] = useState('call');
   const [fuNote, setFuNote] = useState('');
 
-  // Recording state
-  const [recordingSessionId, setRecordingSessionId] = useState<string | null>(null);
-  const [recordingInstance, setRecordingInstance] = useState<Audio.Recording | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingDuration, setRecordingDuration] = useState(0);
+  // Upload & playback state
   const [uploadingRecording, setUploadingRecording] = useState<string | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const pulseAnim = useRef(new Animated.Value(1)).current;
+  const [playingRecordingId, setPlayingRecordingId] = useState<string | null>(null);
+  const soundRef = useRef<Audio.Sound | null>(null);
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      if (recordingInstance) recordingInstance.stopAndUnloadAsync().catch(() => {});
-    };
-  }, [recordingInstance]);
-
-  useEffect(() => {
-    if (isRecording) {
-      const loop = Animated.loop(Animated.sequence([
-        Animated.timing(pulseAnim, { toValue: 0.3, duration: 600, useNativeDriver: true }),
-        Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
-      ]));
-      loop.start();
-      return () => loop.stop();
-    } else { pulseAnim.setValue(1); }
-  }, [isRecording]);
-
-  const formatRecTime = (s: number) =>
-    `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
-
-  const startRecording = async (sessionId: string) => {
-    try {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') { Alert.alert('Permission Required', 'Microphone access needed'); return; }
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      setRecordingInstance(recording);
-      setRecordingSessionId(sessionId);
-      setIsRecording(true);
-      setRecordingDuration(0);
-      timerRef.current = setInterval(() => setRecordingDuration(p => p + 1), 1000);
-    } catch (e: any) { Alert.alert('Error', e.message || 'Failed to start recording'); }
+  const showMsg = (title: string, msg: string) => {
+    if (Platform.OS === 'web') window.alert(`${title}: ${msg}`);
+    else Alert.alert(title, msg);
   };
 
-  const stopAndUpload = async () => {
-    if (!recordingInstance || !recordingSessionId) return;
+  const pickAndUploadRecording = async (sessionId: string) => {
     try {
-      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-      await recordingInstance.stopAndUnloadAsync();
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
-      const uri = recordingInstance.getURI();
-      if (!uri) { Alert.alert('Error', 'Recording file not found'); return; }
-      setIsRecording(false);
-      setUploadingRecording(recordingSessionId);
+      const doc = await DocumentPicker.getDocumentAsync({
+        type: ['audio/*', '*/*'],
+        copyToCacheDirectory: true,
+      });
+      if (doc.canceled || !doc.assets?.length) return;
+      const file = doc.assets[0];
+      setUploadingRecording(sessionId);
       const formData = new FormData();
-      formData.append('call_session_id', recordingSessionId);
+      formData.append('call_session_id', sessionId);
       if (Platform.OS === 'web') {
-        const resp = await fetch(uri);
+        const resp = await fetch(file.uri);
         const blob = await resp.blob();
-        formData.append('file', blob, 'recording.m4a');
+        formData.append('file', blob, file.name || 'recording.mp3');
       } else {
-        formData.append('file', { uri, name: 'recording.m4a', type: 'audio/mp4' } as any);
+        formData.append('file', { uri: file.uri, name: file.name || 'recording.mp3', type: file.mimeType || 'audio/mpeg' } as any);
       }
-      await api.post('/recordings/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      Alert.alert('Success', 'Recording uploaded!');
+      await api.post('/recordings/upload', formData, {
+        headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
+        timeout: 60000,
+      });
+      showMsg('Success', 'Recording uploaded!');
       loadLead();
-    } catch (e: any) { Alert.alert('Error', e.message || 'Upload failed'); }
-    finally {
-      setRecordingInstance(null);
-      setRecordingSessionId(null);
-      setRecordingDuration(0);
+    } catch (e: any) {
+      showMsg('Error', e.response?.data?.detail || e.message || 'Upload failed');
+    } finally {
       setUploadingRecording(null);
     }
   };
 
-  const cancelRecording = async () => {
-    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (recordingInstance) {
-      await recordingInstance.stopAndUnloadAsync().catch(() => {});
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+  const playRecording = async (recordingId: string) => {
+    try {
+      if (soundRef.current) {
+        await soundRef.current.stopAsync().catch(() => {});
+        await soundRef.current.unloadAsync().catch(() => {});
+        soundRef.current = null;
+        if (playingRecordingId === recordingId) { setPlayingRecordingId(null); return; }
+      }
+      setPlayingRecordingId(recordingId);
+      const backendUrl = api.defaults.baseURL?.replace(/\/api$/, '') || '';
+      const audioUrl = `${backendUrl}/api/recordings/${recordingId}/audio`;
+      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true });
+      const { sound } = await Audio.Sound.createAsync({ uri: audioUrl });
+      soundRef.current = sound;
+      sound.setOnPlaybackStatusUpdate((status: any) => {
+        if (status.didJustFinish) {
+          setPlayingRecordingId(null);
+          sound.unloadAsync().catch(() => {});
+          soundRef.current = null;
+        }
+      });
+      await sound.playAsync();
+    } catch (e: any) {
+      setPlayingRecordingId(null);
+      showMsg('Error', 'Failed to play recording');
     }
-    setRecordingInstance(null); setRecordingSessionId(null);
-    setRecordingDuration(0); setIsRecording(false);
   };
 
   const loadLead = async () => {
@@ -255,8 +240,8 @@ export default function LeadDetail() {
         (lead.call_sessions || []).length === 0 ? (
           <Text style={styles.emptyTabText}>No call history yet</Text>
         ) : (lead.call_sessions || []).map((s: any) => {
-          const isActiveRec = isRecording && recordingSessionId === s.id;
           const isUploading = uploadingRecording === s.id;
+          const sessionRecordings = (lead.recordings || []).filter((r: any) => r.call_session_id === s.id);
           return (
             <View key={s.id} style={styles.historyCard}>
               <View style={styles.historyTop}>
@@ -265,33 +250,42 @@ export default function LeadDetail() {
               </View>
               <Text style={styles.historyDetail}>Duration: {s.duration_seconds ? `${s.duration_seconds}s` : '-'}</Text>
               {s.call_notes ? <Text style={styles.historyDetail}>Note: {s.call_notes}</Text> : null}
-              <Text style={styles.historyDetail}>
-                Recording: {s.recording_status === 'uploaded' ? 'Uploaded' : 'Pending'}
-              </Text>
-              {s.recording_status === 'pending' && (
+
+              {/* Uploaded recordings - play them */}
+              {sessionRecordings.map((rec: any) => (
+                <TouchableOpacity
+                  key={rec.id}
+                  style={styles.recPlayRow}
+                  onPress={() => playRecording(rec.id)}
+                >
+                  <Ionicons
+                    name={playingRecordingId === rec.id ? 'pause-circle' : 'play-circle'}
+                    size={24}
+                    color={Colors.primary}
+                  />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.recFileName}>{rec.file_name || 'Recording'}</Text>
+                    <Text style={styles.recFileInfo}>
+                      {rec.file_size_bytes ? `${(rec.file_size_bytes / 1024).toFixed(0)} KB` : ''}
+                      {rec.uploaded_at ? ` • ${formatDate(rec.uploaded_at)}` : ''}
+                    </Text>
+                  </View>
+                  <Ionicons name="checkmark-circle" size={16} color={Colors.success} />
+                </TouchableOpacity>
+              ))}
+
+              {/* Upload button for pending recordings */}
+              {s.recording_status !== 'uploaded' && (
                 <View style={styles.recRow}>
-                  {isActiveRec ? (
-                    <View style={styles.recActiveRow}>
-                      <Animated.View style={[styles.recDot, { opacity: pulseAnim }]} />
-                      <Text style={styles.recTimer}>{formatRecTime(recordingDuration)}</Text>
-                      <TouchableOpacity style={styles.recStopBtn} onPress={stopAndUpload}>
-                        <Ionicons name="stop-circle" size={14} color="#FFF" />
-                        <Text style={styles.recStopText}>Stop & Upload</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity style={styles.recCancelBtn} onPress={cancelRecording}>
-                        <Ionicons name="close" size={14} color={Colors.textMuted} />
-                      </TouchableOpacity>
-                    </View>
-                  ) : isUploading ? (
+                  {isUploading ? (
                     <ActivityIndicator size="small" color={Colors.primary} />
                   ) : (
                     <TouchableOpacity
                       style={styles.recBtn}
-                      onPress={() => startRecording(s.id)}
-                      disabled={isRecording}
+                      onPress={() => pickAndUploadRecording(s.id)}
                     >
-                      <Ionicons name="mic" size={14} color="#FFF" />
-                      <Text style={styles.recBtnText}>Record</Text>
+                      <Ionicons name="cloud-upload" size={14} color="#FFF" />
+                      <Text style={styles.recBtnText}>Upload Recording</Text>
                     </TouchableOpacity>
                   )}
                 </View>
@@ -512,26 +506,16 @@ const styles = StyleSheet.create({
   recRow: {
     marginTop: 8, flexDirection: 'row', alignItems: 'center',
   },
-  recActiveRow: {
-    flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1,
-  },
-  recDot: {
-    width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.danger,
-  },
-  recTimer: {
-    fontSize: 13, fontWeight: '600', color: Colors.danger, fontVariant: ['tabular-nums'],
-  },
-  recStopBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: Colors.danger, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
-  },
-  recStopText: { fontSize: 12, fontWeight: '600', color: '#FFFFFF' },
-  recCancelBtn: {
-    padding: 4, borderRadius: 6, backgroundColor: Colors.background,
-  },
   recBtn: {
-    flexDirection: 'row', alignItems: 'center', gap: 4,
-    backgroundColor: Colors.primary, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: Colors.primary, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 6,
   },
   recBtnText: { fontSize: 12, fontWeight: '600', color: '#FFFFFF' },
+  recPlayRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    marginTop: 8, padding: 10, backgroundColor: Colors.background,
+    borderRadius: 8, borderWidth: 1, borderColor: Colors.border,
+  },
+  recFileName: { fontSize: 13, fontWeight: '500', color: Colors.text },
+  recFileInfo: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
 });
