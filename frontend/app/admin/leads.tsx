@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, FlatList,
-  StyleSheet, RefreshControl, ActivityIndicator, Alert, ScrollView,
+  StyleSheet, RefreshControl, ActivityIndicator, Alert, ScrollView, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter, useFocusEffect } from 'expo-router';
@@ -65,28 +65,35 @@ export default function AdminLeads() {
   };
 
   const bulkAssign = (userId: string, userName: string) => {
-    Alert.alert('Bulk Assign', `Assign ${selected.size} leads to ${userName}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Assign', onPress: async () => {
-          setAssigning(true);
-          try {
-            await api.post('/leads/bulk-assign', {
-              lead_ids: Array.from(selected),
-              assigned_to: userId,
-            });
-            Alert.alert('Done', `${selected.size} leads assigned to ${userName}`);
-            setSelected(new Set());
-            setSelectMode(false);
-            loadLeads();
-          } catch (e: any) {
-            Alert.alert('Error', e.response?.data?.detail || 'Assign failed');
-          } finally {
-            setAssigning(false);
-          }
-        }
+    const doAssign = async () => {
+      setAssigning(true);
+      try {
+        await api.post('/leads/bulk-assign', {
+          lead_ids: Array.from(selected),
+          assigned_to: userId,
+        });
+        if (Platform.OS === 'web') window.alert(`${selected.size} leads assigned to ${userName}`);
+        else Alert.alert('Done', `${selected.size} leads assigned to ${userName}`);
+        setSelected(new Set());
+        setSelectMode(false);
+        loadLeads();
+      } catch (e: any) {
+        const msg = e.response?.data?.detail || 'Assign failed';
+        if (Platform.OS === 'web') window.alert(`Error: ${msg}`);
+        else Alert.alert('Error', msg);
+      } finally {
+        setAssigning(false);
       }
-    ]);
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm(`Assign ${selected.size} leads to ${userName}?`)) doAssign();
+    } else {
+      Alert.alert('Bulk Assign', `Assign ${selected.size} leads to ${userName}?`, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Assign', onPress: doAssign },
+      ]);
+    }
   };
 
   const renderItem = ({ item }: { item: any }) => (
