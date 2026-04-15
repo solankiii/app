@@ -58,10 +58,14 @@ export default function UploadLeadsScreen() {
         formData.append('assigned_to', selectedUser);
       }
 
-      const res = await api.post('/leads/upload-csv', formData, {
-        headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
-        timeout: 60000,
-      });
+      const config: any = { timeout: 60000 };
+      if (Platform.OS !== 'web') {
+        config.headers = { 'Content-Type': 'multipart/form-data' };
+      } else {
+        // On web, let browser set Content-Type with boundary automatically
+        config.transformRequest = [(data: any) => data];
+      }
+      const res = await api.post('/leads/upload-csv', formData, config);
       setResult(res.data);
       if (res.data.created > 0) {
         showMessage('Success', `${res.data.created} leads imported!`);

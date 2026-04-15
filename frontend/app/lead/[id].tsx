@@ -58,10 +58,13 @@ export default function LeadDetail() {
       } else {
         formData.append('file', { uri: file.uri, name: file.name || 'recording.mp3', type: file.mimeType || 'audio/mpeg' } as any);
       }
-      await api.post('/recordings/upload', formData, {
-        headers: Platform.OS === 'web' ? {} : { 'Content-Type': 'multipart/form-data' },
-        timeout: 60000,
-      });
+      const uploadConfig: any = { timeout: 60000 };
+      if (Platform.OS !== 'web') {
+        uploadConfig.headers = { 'Content-Type': 'multipart/form-data' };
+      } else {
+        uploadConfig.transformRequest = [(data: any) => data];
+      }
+      await api.post('/recordings/upload', formData, uploadConfig);
       showMsg('Success', 'Recording uploaded!');
       loadLead();
     } catch (e: any) {
