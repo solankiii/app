@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/src/constants/colors';
 import api from '@/src/api/client';
 
@@ -58,17 +59,31 @@ export default function UploadLeadsScreen() {
         formData.append('assigned_to', selectedUser);
       }
 
-      const config: any = { timeout: 60000 };
-      if (Platform.OS !== 'web') {
-        config.headers = { 'Content-Type': 'multipart/form-data' };
+      let resData: any;
+      if (Platform.OS === 'web') {
+        // Use native fetch on web to avoid axios Content-Type issues
+        const token = await AsyncStorage.getItem('auth_token');
+        const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+        const fetchRes = await fetch(`${backendUrl}/api/leads/upload-csv`, {
+          method: 'POST',
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+          body: formData,
+        });
+        if (!fetchRes.ok) {
+          const errBody = await fetchRes.json().catch(() => ({}));
+          throw new Error(errBody.detail || `Upload failed (${fetchRes.status})`);
+        }
+        resData = await fetchRes.json();
       } else {
-        // On web, let browser set Content-Type with boundary automatically
-        config.transformRequest = [(data: any) => data];
+        const res = await api.post('/leads/upload-csv', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 60000,
+        });
+        resData = res.data;
       }
-      const res = await api.post('/leads/upload-csv', formData, config);
-      setResult(res.data);
-      if (res.data.created > 0) {
-        showMessage('Success', `${res.data.created} leads imported!`);
+      setResult(resData);
+      if (resData.created > 0) {
+        showMessage('Success', `${resData.created} leads imported!`);
       }
     } catch (e: any) {
       console.error('Upload error:', e);

@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
 import { Audio } from 'expo-av';
 import * as DocumentPicker from 'expo-document-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/src/constants/colors';
 import StatusBadge from '@/src/components/StatusBadge';
 import api from '@/src/api/client';
@@ -58,13 +59,24 @@ export default function LeadDetail() {
       } else {
         formData.append('file', { uri: file.uri, name: file.name || 'recording.mp3', type: file.mimeType || 'audio/mpeg' } as any);
       }
-      const uploadConfig: any = { timeout: 60000 };
-      if (Platform.OS !== 'web') {
-        uploadConfig.headers = { 'Content-Type': 'multipart/form-data' };
+      if (Platform.OS === 'web') {
+        const token = await AsyncStorage.getItem('auth_token');
+        const backendUrl = process.env.EXPO_PUBLIC_BACKEND_URL || '';
+        const fetchRes = await fetch(`${backendUrl}/api/recordings/upload`, {
+          method: 'POST',
+          headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+          body: formData,
+        });
+        if (!fetchRes.ok) {
+          const errBody = await fetchRes.json().catch(() => ({}));
+          throw new Error(errBody.detail || `Upload failed (${fetchRes.status})`);
+        }
       } else {
-        uploadConfig.transformRequest = [(data: any) => data];
+        await api.post('/recordings/upload', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 60000,
+        });
       }
-      await api.post('/recordings/upload', formData, uploadConfig);
       showMsg('Success', 'Recording uploaded!');
       loadLead();
     } catch (e: any) {
