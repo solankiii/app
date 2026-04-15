@@ -8,6 +8,10 @@ from fastapi import FastAPI, APIRouter, Request, HTTPException, File, UploadFile
 from fastapi.responses import Response
 import csv
 import io
+import smtplib
+import random
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
@@ -30,6 +34,37 @@ JWT_SECRET = os.environ.get('JWT_SECRET', 'default-dev-jwt-secret')
 JWT_ALGORITHM = "HS256"
 
 ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").split(",") if o.strip()]
+
+SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+
+def send_otp_email(to_email: str, otp: str):
+    if not SMTP_EMAIL or not SMTP_PASSWORD:
+        logging.warning("SMTP not configured — cannot send OTP email")
+        return False
+    msg = MIMEMultipart()
+    msg["From"] = SMTP_EMAIL
+    msg["To"] = to_email
+    msg["Subject"] = "AHM Sales CRM - Password Reset OTP"
+    body = f"""
+    <h2>Password Reset</h2>
+    <p>Your one-time password (OTP) to reset your account password is:</p>
+    <h1 style="color: #2563EB; letter-spacing: 8px; font-size: 36px;">{otp}</h1>
+    <p>This OTP is valid for <b>10 minutes</b>.</p>
+    <p>If you did not request this, please ignore this email.</p>
+    <br>
+    <p style="color: #888;">— AHM Sales CRM</p>
+    """
+    msg.attach(MIMEText(body, "html"))
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+            server.starttls()
+            server.login(SMTP_EMAIL, SMTP_PASSWORD)
+            server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
+        return True
+    except Exception as e:
+        logging.error(f"Failed to send email: {e}")
+        return False
 
 app = FastAPI(title="AHM Sales CRM API")
 api_router = APIRouter(prefix="/api")
@@ -137,6 +172,14 @@ class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+class VerifyOtpRequest(BaseModel):
+    email: str
+    otp: str
+    new_password: str
+
 class CallSessionCreate(BaseModel):
     lead_id: str
     dialed_number: str
@@ -239,6 +282,45 @@ async def change_password(req: ChangePasswordRequest, request: Request):
         {"$set": {"password_hash": hash_password(req.new_password), "updated_at": datetime.now(timezone.utc).isoformat()}}
     )
     return {"message": "Password changed successfully"}
+
+@api_router.post("/auth/forgot-password")
+async def forgot_password(req: ForgotPasswordRequest):
+    """Send OTP to user's email for password reset."""
+    user = await db.users.find_one({"email": req.email.lower().strip()})
+    if not user:
+        # Don't reveal whether email exists
+        return {"message": "If this email is registered, you will receive an OTP."}
+    otp = str(random.randint(100000, 999999))
+    expires = datetime.now(timezone.utc) + timedelta(minutes=10)
+    await db.password_resets.delete_many({"email": req.email.lower().strip()})
+    await db.password_resets.insert_one({
+        "email": req.email.lower().strip(),
+        "otp": otp,
+        "expires_at": expires.isoformat(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    sent = send_otp_email(req.email.lower().strip(), otp)
+    if not sent:
+        raise HTTPException(500, "Failed to send email. SMTP not configured — contact your admin.")
+    return {"message": "If this email is registered, you will receive an OTP."}
+
+@api_router.post("/auth/verify-reset-otp")
+async def verify_reset_otp(req: VerifyOtpRequest):
+    """Verify OTP and reset password."""
+    record = await db.password_resets.find_one({"email": req.email.lower().strip(), "otp": req.otp})
+    if not record:
+        raise HTTPException(400, "Invalid OTP")
+    if datetime.now(timezone.utc).isoformat() > record["expires_at"]:
+        await db.password_resets.delete_many({"email": req.email.lower().strip()})
+        raise HTTPException(400, "OTP has expired. Please request a new one.")
+    if len(req.new_password) < 6:
+        raise HTTPException(400, "Password must be at least 6 characters")
+    await db.users.update_one(
+        {"email": req.email.lower().strip()},
+        {"$set": {"password_hash": hash_password(req.new_password), "updated_at": datetime.now(timezone.utc).isoformat()}}
+    )
+    await db.password_resets.delete_many({"email": req.email.lower().strip()})
+    return {"message": "Password reset successfully. You can now sign in."}
 
 
 # ─── Users Routes ────────────────────────────────────────────────────
