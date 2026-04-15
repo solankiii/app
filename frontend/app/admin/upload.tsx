@@ -8,6 +8,14 @@ import * as DocumentPicker from 'expo-document-picker';
 import { Colors } from '@/src/constants/colors';
 import api from '@/src/api/client';
 
+const showMessage = (title: string, message: string) => {
+  if (Platform.OS === 'web') {
+    window.alert(`${title}: ${message}`);
+  } else {
+    Alert.alert(title, message);
+  }
+};
+
 export default function UploadLeadsScreen() {
   const [salesUsers, setSalesUsers] = useState<any[]>([]);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
@@ -31,11 +39,21 @@ export default function UploadLeadsScreen() {
       setResult(null);
 
       const formData = new FormData();
-      formData.append('file', {
-        uri: file.uri,
-        name: file.name || 'leads.csv',
-        type: 'text/csv',
-      } as any);
+
+      if (Platform.OS === 'web') {
+        // On web, fetch the file URI and create a proper Blob
+        const response = await fetch(file.uri);
+        const blob = await response.blob();
+        formData.append('file', blob, file.name || 'leads.csv');
+      } else {
+        // On native, use the RN-style object
+        formData.append('file', {
+          uri: file.uri,
+          name: file.name || 'leads.csv',
+          type: 'text/csv',
+        } as any);
+      }
+
       if (selectedUser) {
         formData.append('assigned_to', selectedUser);
       }
@@ -46,10 +64,11 @@ export default function UploadLeadsScreen() {
       });
       setResult(res.data);
       if (res.data.created > 0) {
-        Alert.alert('Success', `${res.data.created} leads imported!`);
+        showMessage('Success', `${res.data.created} leads imported!`);
       }
     } catch (e: any) {
-      Alert.alert('Error', e.response?.data?.detail || e.message || 'Upload failed');
+      console.error('Upload error:', e);
+      showMessage('Error', e.response?.data?.detail || e.message || 'Upload failed');
     } finally {
       setUploading(false);
     }

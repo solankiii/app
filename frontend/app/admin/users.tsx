@@ -1,13 +1,32 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, FlatList, StyleSheet,
-  RefreshControl, Alert, ActivityIndicator,
+  RefreshControl, Alert, ActivityIndicator, Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
 import { Colors } from '@/src/constants/colors';
 import api from '@/src/api/client';
+
+const confirmAction = (title: string, message: string, onConfirm: () => void) => {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) onConfirm();
+  } else {
+    Alert.alert(title, message, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Confirm', onPress: onConfirm },
+    ]);
+  }
+};
+
+const showMessage = (title: string, message: string) => {
+  if (Platform.OS === 'web') {
+    window.alert(`${title}: ${message}`);
+  } else {
+    Alert.alert(title, message);
+  }
+};
 
 export default function UsersScreen() {
   const { user: currentUser } = useAuth();
@@ -29,64 +48,62 @@ export default function UsersScreen() {
 
   const toggleRole = async (userId: string, currentRole: string) => {
     const newRole = currentRole === 'admin' ? 'sales' : 'admin';
-    Alert.alert(
+    confirmAction(
       'Change Role',
       `Change this user to ${newRole.toUpperCase()}?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm', onPress: async () => {
-            setUpdating(userId);
-            try {
-              await api.patch(`/users/${userId}/role`, { role: newRole });
-              await loadUsers();
-            } catch (e: any) {
-              Alert.alert('Error', e.response?.data?.detail || 'Failed to update role');
-            } finally {
-              setUpdating(null);
-            }
-          }
+      async () => {
+        setUpdating(userId);
+        try {
+          await api.patch(`/users/${userId}/role`, { role: newRole });
+          await loadUsers();
+          showMessage('Success', `Role changed to ${newRole}`);
+        } catch (e: any) {
+          showMessage('Error', e.response?.data?.detail || 'Failed to update role');
+        } finally {
+          setUpdating(null);
         }
-      ]
+      }
     );
   };
 
   const resetPassword = (userId: string, userName: string) => {
-    Alert.prompt
-      ? Alert.prompt(
-          'Reset Password',
-          `Enter new password for ${userName}`,
-          [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Reset', onPress: async (newPw?: string) => {
-                if (!newPw || newPw.length < 6) {
-                  Alert.alert('Error', 'Password must be at least 6 characters');
-                  return;
-                }
-                try {
-                  await api.post('/auth/reset-password', { user_id: userId, new_password: newPw });
-                  Alert.alert('Success', `Password reset for ${userName}`);
-                } catch (e: any) {
-                  Alert.alert('Error', e.response?.data?.detail || 'Failed to reset password');
-                }
+    const newPw = Platform.OS === 'web'
+      ? window.prompt(`Enter new password for ${userName} (min 6 chars):`)
+      : null;
+
+    if (Platform.OS === 'web') {
+      if (!newPw) return;
+      if (newPw.length < 6) {
+        showMessage('Error', 'Password must be at least 6 characters');
+        return;
+      }
+      api.post('/auth/reset-password', { user_id: userId, new_password: newPw })
+        .then(() => showMessage('Success', `Password reset for ${userName}`))
+        .catch((e: any) => showMessage('Error', e.response?.data?.detail || 'Failed to reset password'));
+    } else if (Alert.prompt) {
+      Alert.prompt(
+        'Reset Password',
+        `Enter new password for ${userName}`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Reset', onPress: async (pw?: string) => {
+              if (!pw || pw.length < 6) {
+                Alert.alert('Error', 'Password must be at least 6 characters');
+                return;
+              }
+              try {
+                await api.post('/auth/reset-password', { user_id: userId, new_password: pw });
+                Alert.alert('Success', `Password reset for ${userName}`);
+              } catch (e: any) {
+                Alert.alert('Error', e.response?.data?.detail || 'Failed to reset password');
               }
             }
-          ],
-          'secure-text'
-        )
-      : // Web/Android fallback - use simple prompt
-        (() => {
-          const newPw = prompt(`Enter new password for ${userName} (min 6 chars):`);
-          if (!newPw) return;
-          if (newPw.length < 6) {
-            Alert.alert('Error', 'Password must be at least 6 characters');
-            return;
           }
-          api.post('/auth/reset-password', { user_id: userId, new_password: newPw })
-            .then(() => Alert.alert('Success', `Password reset for ${userName}`))
-            .catch((e: any) => Alert.alert('Error', e.response?.data?.detail || 'Failed to reset password'));
-        })();
+        ],
+        'secure-text'
+      );
+    }
   };
 
   const renderUser = ({ item }: { item: any }) => {

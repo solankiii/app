@@ -1,10 +1,12 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet, ScrollView,
   RefreshControl, ActivityIndicator, Alert, Linking, TextInput, Modal,
+  Platform, Animated,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
+import { Audio } from 'expo-av';
 import { Colors } from '@/src/constants/colors';
 import StatusBadge from '@/src/components/StatusBadge';
 import api from '@/src/api/client';
@@ -26,6 +28,91 @@ export default function LeadDetail() {
   const [fuDate, setFuDate] = useState('');
   const [fuType, setFuType] = useState('call');
   const [fuNote, setFuNote] = useState('');
+
+  // Recording state
+  const [recordingSessionId, setRecordingSessionId] = useState<string | null>(null);
+  const [recordingInstance, setRecordingInstance] = useState<Audio.Recording | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [uploadingRecording, setUploadingRecording] = useState<string | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (recordingInstance) recordingInstance.stopAndUnloadAsync().catch(() => {});
+    };
+  }, [recordingInstance]);
+
+  useEffect(() => {
+    if (isRecording) {
+      const loop = Animated.loop(Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 0.3, duration: 600, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 1, duration: 600, useNativeDriver: true }),
+      ]));
+      loop.start();
+      return () => loop.stop();
+    } else { pulseAnim.setValue(1); }
+  }, [isRecording]);
+
+  const formatRecTime = (s: number) =>
+    `${Math.floor(s / 60).toString().padStart(2, '0')}:${(s % 60).toString().padStart(2, '0')}`;
+
+  const startRecording = async (sessionId: string) => {
+    try {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') { Alert.alert('Permission Required', 'Microphone access needed'); return; }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const { recording } = await Audio.Recording.createAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      setRecordingInstance(recording);
+      setRecordingSessionId(sessionId);
+      setIsRecording(true);
+      setRecordingDuration(0);
+      timerRef.current = setInterval(() => setRecordingDuration(p => p + 1), 1000);
+    } catch (e: any) { Alert.alert('Error', e.message || 'Failed to start recording'); }
+  };
+
+  const stopAndUpload = async () => {
+    if (!recordingInstance || !recordingSessionId) return;
+    try {
+      if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+      await recordingInstance.stopAndUnloadAsync();
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
+      const uri = recordingInstance.getURI();
+      if (!uri) { Alert.alert('Error', 'Recording file not found'); return; }
+      setIsRecording(false);
+      setUploadingRecording(recordingSessionId);
+      const formData = new FormData();
+      formData.append('call_session_id', recordingSessionId);
+      if (Platform.OS === 'web') {
+        const resp = await fetch(uri);
+        const blob = await resp.blob();
+        formData.append('file', blob, 'recording.m4a');
+      } else {
+        formData.append('file', { uri, name: 'recording.m4a', type: 'audio/mp4' } as any);
+      }
+      await api.post('/recordings/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
+      Alert.alert('Success', 'Recording uploaded!');
+      loadLead();
+    } catch (e: any) { Alert.alert('Error', e.message || 'Upload failed'); }
+    finally {
+      setRecordingInstance(null);
+      setRecordingSessionId(null);
+      setRecordingDuration(0);
+      setUploadingRecording(null);
+    }
+  };
+
+  const cancelRecording = async () => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    if (recordingInstance) {
+      await recordingInstance.stopAndUnloadAsync().catch(() => {});
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: false }).catch(() => {});
+    }
+    setRecordingInstance(null); setRecordingSessionId(null);
+    setRecordingDuration(0); setIsRecording(false);
+  };
 
   const loadLead = async () => {
     try {
@@ -167,16 +254,51 @@ export default function LeadDetail() {
       {activeTab === 'calls' && (
         (lead.call_sessions || []).length === 0 ? (
           <Text style={styles.emptyTabText}>No call history yet</Text>
-        ) : (lead.call_sessions || []).map((s: any) => (
-          <View key={s.id} style={styles.historyCard}>
-            <View style={styles.historyTop}>
-              <Text style={styles.historyDate}>{formatDate(s.call_started_at)}</Text>
-              {s.outcome ? <StatusBadge status={s.outcome} small /> : <Text style={styles.inProgress}>In Progress</Text>}
+        ) : (lead.call_sessions || []).map((s: any) => {
+          const isActiveRec = isRecording && recordingSessionId === s.id;
+          const isUploading = uploadingRecording === s.id;
+          return (
+            <View key={s.id} style={styles.historyCard}>
+              <View style={styles.historyTop}>
+                <Text style={styles.historyDate}>{formatDate(s.call_started_at)}</Text>
+                {s.outcome ? <StatusBadge status={s.outcome} small /> : <Text style={styles.inProgress}>In Progress</Text>}
+              </View>
+              <Text style={styles.historyDetail}>Duration: {s.duration_seconds ? `${s.duration_seconds}s` : '-'}</Text>
+              {s.call_notes ? <Text style={styles.historyDetail}>Note: {s.call_notes}</Text> : null}
+              <Text style={styles.historyDetail}>
+                Recording: {s.recording_status === 'uploaded' ? 'Uploaded' : 'Pending'}
+              </Text>
+              {s.recording_status === 'pending' && (
+                <View style={styles.recRow}>
+                  {isActiveRec ? (
+                    <View style={styles.recActiveRow}>
+                      <Animated.View style={[styles.recDot, { opacity: pulseAnim }]} />
+                      <Text style={styles.recTimer}>{formatRecTime(recordingDuration)}</Text>
+                      <TouchableOpacity style={styles.recStopBtn} onPress={stopAndUpload}>
+                        <Ionicons name="stop-circle" size={14} color="#FFF" />
+                        <Text style={styles.recStopText}>Stop & Upload</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.recCancelBtn} onPress={cancelRecording}>
+                        <Ionicons name="close" size={14} color={Colors.textMuted} />
+                      </TouchableOpacity>
+                    </View>
+                  ) : isUploading ? (
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                  ) : (
+                    <TouchableOpacity
+                      style={styles.recBtn}
+                      onPress={() => startRecording(s.id)}
+                      disabled={isRecording}
+                    >
+                      <Ionicons name="mic" size={14} color="#FFF" />
+                      <Text style={styles.recBtnText}>Record</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )}
             </View>
-            <Text style={styles.historyDetail}>Duration: {s.duration_seconds ? `${s.duration_seconds}s` : '-'}</Text>
-            {s.call_notes ? <Text style={styles.historyDetail}>Note: {s.call_notes}</Text> : null}
-          </View>
-        ))
+          );
+        })
       )}
 
       {activeTab === 'notes' && (
@@ -387,4 +509,29 @@ const styles = StyleSheet.create({
     paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8, marginBottom: 4,
   },
   statusOptionActive: { backgroundColor: Colors.background },
+  recRow: {
+    marginTop: 8, flexDirection: 'row', alignItems: 'center',
+  },
+  recActiveRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 8, flex: 1,
+  },
+  recDot: {
+    width: 10, height: 10, borderRadius: 5, backgroundColor: Colors.danger,
+  },
+  recTimer: {
+    fontSize: 13, fontWeight: '600', color: Colors.danger, fontVariant: ['tabular-nums'],
+  },
+  recStopBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: Colors.danger, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+  },
+  recStopText: { fontSize: 12, fontWeight: '600', color: '#FFFFFF' },
+  recCancelBtn: {
+    padding: 4, borderRadius: 6, backgroundColor: Colors.background,
+  },
+  recBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    backgroundColor: Colors.primary, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+  },
+  recBtnText: { fontSize: 12, fontWeight: '600', color: '#FFFFFF' },
 });
