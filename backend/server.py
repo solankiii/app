@@ -455,19 +455,26 @@ async def create_lead(req: LeadCreate, request: Request):
     })
     return lead
 
-@api_router.post("/leads/upload-csv")
-async def upload_leads_csv(request: Request, file: UploadFile = File(...), assigned_to: Optional[str] = Form(None)):
-    user = await require_admin(request)
-    contents = await file.read()
-    text = contents.decode("utf-8-sig")
+def _get_csv_field(row: dict, *keys: str) -> str:
+    """Get a field from a CSV row, trying multiple column name variations case-insensitively."""
+    lower_map = {k.strip().lower(): v for k, v in row.items() if k}
+    for key in keys:
+        val = lower_map.get(key.lower(), "")
+        if val and val.strip():
+            return val.strip()
+    return ""
+
+
+def _parse_csv_rows(text: str, assigned_to, user_id: str):
     reader = csv.DictReader(io.StringIO(text))
     now = datetime.now(timezone.utc).isoformat()
     created = 0
     skipped = 0
     errors = []
+    leads_to_insert = []
     for idx, row in enumerate(reader, start=2):
-        name = (row.get("full_name") or row.get("name") or row.get("Full Name") or "").strip()
-        phone = (row.get("phone_number") or row.get("phone") or row.get("Phone") or row.get("Phone Number") or "").strip()
+        name = _get_csv_field(row, "full_name", "name", "full name", "contact name", "contact")
+        phone = _get_csv_field(row, "phone_number", "phone", "phone number", "phone num", "mobile", "mobile number", "contact number")
         if not name or not phone:
             skipped += 1
             errors.append(f"Row {idx}: missing name or phone")
@@ -476,20 +483,31 @@ async def upload_leads_csv(request: Request, file: UploadFile = File(...), assig
             "id": str(uuid.uuid4()),
             "full_name": name,
             "phone_number": phone,
-            "alternate_phone": (row.get("alternate_phone") or row.get("Alternate Phone") or "").strip() or None,
-            "company_name": (row.get("company_name") or row.get("company") or row.get("Company") or "").strip() or None,
-            "source": (row.get("source") or row.get("Source") or "direct").strip(),
-            "industry": (row.get("industry") or row.get("Industry") or "").strip() or None,
-            "city": (row.get("city") or row.get("City") or "").strip() or None,
+            "alternate_phone": _get_csv_field(row, "alternate_phone", "alternate phone", "alt phone") or None,
+            "company_name": _get_csv_field(row, "company_name", "company", "company name", "firm") or None,
+            "source": _get_csv_field(row, "source") or "direct",
+            "industry": _get_csv_field(row, "industry") or None,
+            "city": _get_csv_field(row, "city", "location") or None,
             "status": "new",
-            "assigned_to": assigned_to or None,
-            "notes": (row.get("notes") or row.get("Notes") or "").strip() or None,
-            "created_by": user["id"],
+            "assigned_to": assigned_to,
+            "notes": _get_csv_field(row, "notes", "note", "remarks") or None,
+            "created_by": user_id,
             "created_at": now,
             "updated_at": now,
         }
-        await db.leads.insert_one(lead)
+        leads_to_insert.append(lead)
         created += 1
+    return leads_to_insert, created, skipped, errors
+
+
+@api_router.post("/leads/upload-csv")
+async def upload_leads_csv(request: Request, file: UploadFile = File(...), assigned_to: Optional[str] = Form(None)):
+    user = await require_admin(request)
+    contents = await file.read()
+    text = contents.decode("utf-8-sig")
+    leads_to_insert, created, skipped, errors = _parse_csv_rows(text, assigned_to or None, user["id"])
+    for lead in leads_to_insert:
+        await db.leads.insert_one(lead)
     return {"created": created, "skipped": skipped, "errors": errors[:20]}
 
 
@@ -502,36 +520,9 @@ async def upload_leads_csv_text(request: Request):
     if not csv_text.strip():
         raise HTTPException(400, "No CSV text provided")
     text = csv_text.lstrip("\ufeff")
-    reader = csv.DictReader(io.StringIO(text))
-    now = datetime.now(timezone.utc).isoformat()
-    created = 0
-    skipped = 0
-    errors = []
-    for idx, row in enumerate(reader, start=2):
-        name = (row.get("full_name") or row.get("name") or row.get("Full Name") or "").strip()
-        phone = (row.get("phone_number") or row.get("phone") or row.get("Phone") or row.get("Phone Number") or "").strip()
-        if not name or not phone:
-            skipped += 1
-            errors.append(f"Row {idx}: missing name or phone")
-            continue
-        lead = {
-            "id": str(uuid.uuid4()),
-            "full_name": name,
-            "phone_number": phone,
-            "alternate_phone": (row.get("alternate_phone") or row.get("Alternate Phone") or "").strip() or None,
-            "company_name": (row.get("company_name") or row.get("company") or row.get("Company") or "").strip() or None,
-            "source": (row.get("source") or row.get("Source") or "direct").strip(),
-            "industry": (row.get("industry") or row.get("Industry") or "").strip() or None,
-            "city": (row.get("city") or row.get("City") or "").strip() or None,
-            "status": "new",
-            "assigned_to": assigned_to,
-            "notes": (row.get("notes") or row.get("Notes") or "").strip() or None,
-            "created_by": user["id"],
-            "created_at": now,
-            "updated_at": now,
-        }
+    leads_to_insert, created, skipped, errors = _parse_csv_rows(text, assigned_to, user["id"])
+    for lead in leads_to_insert:
         await db.leads.insert_one(lead)
-        created += 1
     return {"created": created, "skipped": skipped, "errors": errors[:20]}
 
 
