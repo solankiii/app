@@ -898,6 +898,35 @@ async def upload_recording(
     )
     return recording
 
+@api_router.post("/recordings/upload-base64")
+async def upload_recording_base64(request: Request):
+    await get_current_user(request)
+    body = await request.json()
+    call_session_id = body.get("call_session_id")
+    file_name = body.get("file_name", "recording.mp3")
+    file_data = body.get("file_data", "")
+    content_type = body.get("content_type", "audio/mpeg")
+    if not call_session_id or not file_data:
+        raise HTTPException(400, "call_session_id and file_data are required")
+    contents = base64.b64decode(file_data)
+    now = datetime.now(timezone.utc).isoformat()
+    recording = {
+        "id": str(uuid.uuid4()), "call_session_id": call_session_id,
+        "file_name": file_name, "local_file_path": None,
+        "storage_url": None, "base64_data": file_data,
+        "mime_type": content_type,
+        "file_size_bytes": len(contents),
+        "matched_at": now, "uploaded_at": now, "upload_status": "uploaded"
+    }
+    await db.call_recordings.insert_one(recording)
+    recording.pop("_id", None)
+    recording.pop("base64_data", None)
+    await db.call_sessions.update_one(
+        {"id": call_session_id}, {"$set": {"recording_status": "uploaded"}}
+    )
+    return recording
+
+
 @api_router.get("/recordings/{recording_id}/audio")
 async def get_recording_audio(recording_id: str):
     recording = await db.call_recordings.find_one({"id": recording_id})

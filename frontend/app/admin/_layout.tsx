@@ -42,6 +42,7 @@ export default function AdminLayout() {
       <Tabs.Screen name="share" options={{
         title: 'QR Share',
         tabBarIcon: ({ color, size }) => <Ionicons name="qr-code-outline" size={size} color={color} />,
+        href: null,
       }} />
       <Tabs.Screen name="recordings" options={{
         title: 'Recordings',

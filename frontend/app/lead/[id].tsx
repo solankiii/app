@@ -27,6 +27,7 @@ export default function LeadDetail() {
   const [showStatusModal, setShowStatusModal] = useState(false);
   const [noteText, setNoteText] = useState('');
   const [fuDate, setFuDate] = useState('');
+  const [fuTime, setFuTime] = useState('10:00');
   const [fuType, setFuType] = useState('call');
   const [fuNote, setFuNote] = useState('');
 
@@ -49,18 +50,32 @@ export default function LeadDetail() {
       if (doc.canceled || !doc.assets?.length) return;
       const file = doc.assets[0];
       setUploadingRecording(sessionId);
-      const formData = new FormData();
-      formData.append('call_session_id', sessionId);
+
       if (Platform.OS === 'web') {
+        // Web: read file as base64 and send as JSON to avoid multipart issues
         const resp = await fetch(file.uri);
         const blob = await resp.blob();
-        formData.append('file', blob, file.name || 'recording.mp3');
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const result = reader.result as string;
+            resolve(result.split(',')[1]); // strip data:...;base64, prefix
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+        await api.post('/recordings/upload-base64', {
+          call_session_id: sessionId,
+          file_name: file.name || 'recording.mp3',
+          file_data: base64,
+          content_type: file.mimeType || 'audio/mpeg',
+        }, { timeout: 60000 });
       } else {
+        const formData = new FormData();
+        formData.append('call_session_id', sessionId);
         formData.append('file', { uri: file.uri, name: file.name || 'recording.mp3', type: file.mimeType || 'audio/mpeg' } as any);
+        await api.post('/recordings/upload', formData, { timeout: 60000 });
       }
-      await api.post('/recordings/upload', formData, {
-        timeout: 60000,
-      });
       showMsg('Success', 'Recording uploaded!');
       loadLead();
     } catch (e: any) {
@@ -143,21 +158,23 @@ export default function LeadDetail() {
 
   const handleScheduleFollowUp = async () => {
     if (!fuDate.trim()) {
-      Alert.alert('Error', 'Please enter a date (YYYY-MM-DD HH:MM)');
+      showMsg('Error', 'Please select a date');
       return;
     }
     try {
-      const isoDate = new Date(fuDate.replace(' ', 'T')).toISOString();
+      const dateStr = `${fuDate}T${fuTime || '10:00'}`;
+      const isoDate = new Date(dateStr).toISOString();
       await api.post('/follow-ups', {
         lead_id: id, follow_up_at: isoDate,
         follow_up_type: fuType, note: fuNote,
       });
       setFuDate('');
+      setFuTime('10:00');
       setFuNote('');
       setShowFollowUpModal(false);
       loadLead();
     } catch (e) {
-      Alert.alert('Error', 'Failed to schedule follow-up. Use format: YYYY-MM-DD HH:MM');
+      showMsg('Error', 'Failed to schedule follow-up');
     }
   };
 
@@ -176,8 +193,30 @@ export default function LeadDetail() {
     return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   };
 
+  // Generate quick date options for follow-up
+  const getQuickDates = () => {
+    const today = new Date();
+    const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+    const in3days = new Date(today); in3days.setDate(today.getDate() + 3);
+    const nextWeek = new Date(today); nextWeek.setDate(today.getDate() + 7);
+    const in2weeks = new Date(today); in2weeks.setDate(today.getDate() + 14);
+    const fmt = (d: Date) => d.toISOString().split('T')[0];
+    const label = (d: Date) => d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', weekday: 'short' });
+    return [
+      { label: 'Tomorrow', sublabel: label(tomorrow), value: fmt(tomorrow) },
+      { label: 'In 3 days', sublabel: label(in3days), value: fmt(in3days) },
+      { label: 'Next week', sublabel: label(nextWeek), value: fmt(nextWeek) },
+      { label: 'In 2 weeks', sublabel: label(in2weeks), value: fmt(in2weeks) },
+    ];
+  };
+
   if (loading) return <ActivityIndicator size="large" color={Colors.primary} style={{ flex: 1, justifyContent: 'center' }} />;
   if (!lead) return <Text style={{ textAlign: 'center', marginTop: 40 }}>Lead not found</Text>;
+
+  const callSessions = (lead.call_sessions || []).slice().sort(
+    (a: any, b: any) => new Date(a.call_started_at).getTime() - new Date(b.call_started_at).getTime()
+  );
+  const totalCalls = callSessions.length;
 
   return (
     <ScrollView
@@ -228,7 +267,7 @@ export default function LeadDetail() {
             onPress={() => setActiveTab(t)}
           >
             <Text style={[styles.tabText, activeTab === t && styles.tabTextActive]}>
-              {t === 'follow-ups' ? 'Follow-ups' : t.charAt(0).toUpperCase() + t.slice(1)}
+              {t === 'calls' ? `Calls (${totalCalls})` : t === 'follow-ups' ? 'Follow-ups' : t.charAt(0).toUpperCase() + t.slice(1)}
             </Text>
           </TouchableOpacity>
         ))}
@@ -236,15 +275,21 @@ export default function LeadDetail() {
 
       {/* Tab Content */}
       {activeTab === 'calls' && (
-        (lead.call_sessions || []).length === 0 ? (
+        callSessions.length === 0 ? (
           <Text style={styles.emptyTabText}>No call history yet</Text>
-        ) : (lead.call_sessions || []).map((s: any) => {
+        ) : callSessions.map((s: any, idx: number) => {
+          const callNumber = idx + 1;
           const isUploading = uploadingRecording === s.id;
           const sessionRecordings = (lead.recordings || []).filter((r: any) => r.call_session_id === s.id);
           return (
             <View key={s.id} style={styles.historyCard}>
               <View style={styles.historyTop}>
-                <Text style={styles.historyDate}>{formatDate(s.call_started_at)}</Text>
+                <View style={styles.callNumberRow}>
+                  <View style={styles.callBadge}>
+                    <Text style={styles.callBadgeText}>Call #{callNumber}</Text>
+                  </View>
+                  <Text style={styles.historyDate}>{formatDate(s.call_started_at)}</Text>
+                </View>
                 {s.outcome ? <StatusBadge status={s.outcome} small /> : <Text style={styles.inProgress}>In Progress</Text>}
               </View>
               <Text style={styles.historyDetail}>Duration: {s.duration_seconds ? `${s.duration_seconds}s` : '-'}</Text>
@@ -273,22 +318,22 @@ export default function LeadDetail() {
                 </TouchableOpacity>
               ))}
 
-              {/* Upload button for pending recordings */}
-              {s.recording_status !== 'uploaded' && (
-                <View style={styles.recRow}>
-                  {isUploading ? (
-                    <ActivityIndicator size="small" color={Colors.primary} />
-                  ) : (
-                    <TouchableOpacity
-                      style={styles.recBtn}
-                      onPress={() => pickAndUploadRecording(s.id)}
-                    >
-                      <Ionicons name="cloud-upload" size={14} color="#FFF" />
-                      <Text style={styles.recBtnText}>Upload Recording</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              )}
+              {/* Always show upload button — can upload multiple recordings per call */}
+              <View style={styles.recRow}>
+                {isUploading ? (
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                ) : (
+                  <TouchableOpacity
+                    style={styles.recBtn}
+                    onPress={() => pickAndUploadRecording(s.id)}
+                  >
+                    <Ionicons name="cloud-upload" size={14} color="#FFF" />
+                    <Text style={styles.recBtnText}>
+                      {sessionRecordings.length > 0 ? 'Upload Another Recording' : 'Upload Recording'}
+                    </Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             </View>
           );
         })
@@ -347,19 +392,48 @@ export default function LeadDetail() {
         </View>
       </Modal>
 
-      {/* Follow-up Modal */}
+      {/* Follow-up Modal with Calendar-like Date Picker */}
       <Modal visible={showFollowUpModal} transparent animationType="slide">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Schedule Follow-up</Text>
-            <Text style={styles.fieldLabel}>Date & Time (YYYY-MM-DD HH:MM)</Text>
+
+            <Text style={styles.fieldLabel}>Quick Pick</Text>
+            <View style={styles.quickDateRow}>
+              {getQuickDates().map(qd => (
+                <TouchableOpacity
+                  key={qd.value}
+                  style={[styles.quickDateChip, fuDate === qd.value && styles.quickDateChipActive]}
+                  onPress={() => setFuDate(qd.value)}
+                >
+                  <Text style={[styles.quickDateLabel, fuDate === qd.value && styles.quickDateLabelActive]}>{qd.label}</Text>
+                  <Text style={[styles.quickDateSub, fuDate === qd.value && styles.quickDateSubActive]}>{qd.sublabel}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.fieldLabel}>Or enter date</Text>
             <TextInput
               testID="fu-date-input"
               style={styles.modalInputSingle}
               value={fuDate}
               onChangeText={setFuDate}
-              placeholder="2026-04-15 10:00"
+              placeholder="YYYY-MM-DD"
             />
+
+            <Text style={styles.fieldLabel}>Time</Text>
+            <View style={styles.timeRow}>
+              {['09:00', '10:00', '11:00', '14:00', '16:00', '18:00'].map(t => (
+                <TouchableOpacity
+                  key={t}
+                  style={[styles.timeChip, fuTime === t && styles.typeChipActive]}
+                  onPress={() => setFuTime(t)}
+                >
+                  <Text style={[styles.timeChipText, fuTime === t && styles.typeChipTextActive]}>{t}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             <Text style={styles.fieldLabel}>Type</Text>
             <View style={styles.typeRow}>
               {FOLLOW_UP_TYPES.map(t => (
@@ -456,6 +530,11 @@ const styles = StyleSheet.create({
     borderRadius: 8, padding: 12, marginBottom: 8,
   },
   historyTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  callNumberRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  callBadge: {
+    backgroundColor: Colors.primary, paddingHorizontal: 8, paddingVertical: 2, borderRadius: 4,
+  },
+  callBadgeText: { fontSize: 11, fontWeight: '700', color: '#FFFFFF' },
   historyDate: { fontSize: 12, color: Colors.textMuted },
   historyDetail: { fontSize: 13, color: Colors.text, marginTop: 4 },
   noteAuthor: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
@@ -467,7 +546,7 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     backgroundColor: Colors.surface, borderTopLeftRadius: 16, borderTopRightRadius: 16,
-    padding: 20, paddingBottom: 40,
+    padding: 20, paddingBottom: 40, maxHeight: '90%',
   },
   modalTitle: { fontSize: 18, fontWeight: '700', color: Colors.text, marginBottom: 16 },
   fieldLabel: { fontSize: 13, fontWeight: '600', color: Colors.text, marginBottom: 6, marginTop: 10 },
@@ -479,6 +558,23 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: Colors.border, borderRadius: 8,
     padding: 12, fontSize: 14, color: Colors.text, height: 44,
   },
+  quickDateRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  quickDateChip: {
+    flex: 1, minWidth: 70, paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8,
+    backgroundColor: Colors.background, borderWidth: 1, borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  quickDateChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  quickDateLabel: { fontSize: 12, fontWeight: '600', color: Colors.text },
+  quickDateLabelActive: { color: '#FFFFFF' },
+  quickDateSub: { fontSize: 10, color: Colors.textMuted, marginTop: 2 },
+  quickDateSubActive: { color: 'rgba(255,255,255,0.8)' },
+  timeRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginBottom: 4 },
+  timeChip: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+    backgroundColor: Colors.background, borderWidth: 1, borderColor: Colors.border,
+  },
+  timeChipText: { fontSize: 12, color: Colors.textMuted, fontWeight: '500' },
   typeRow: { flexDirection: 'row', gap: 8, marginBottom: 10 },
   typeChip: {
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,

@@ -96,6 +96,56 @@ export default function AdminLeads() {
     }
   };
 
+  const distributeEqually = () => {
+    if (salesUsers.length === 0) return;
+    const selectedArr = Array.from(selected);
+    const perUser = Math.floor(selectedArr.length / salesUsers.length);
+    const remainder = selectedArr.length % salesUsers.length;
+    const distribution = salesUsers.map((u, i) => ({
+      name: u.full_name,
+      count: perUser + (i < remainder ? 1 : 0),
+    }));
+    const summary = distribution.map(d => `${d.name}: ${d.count}`).join('\n');
+    const msg = `Distribute ${selectedArr.length} leads equally?\n\n${summary}`;
+
+    const doDistribute = async () => {
+      setAssigning(true);
+      try {
+        let offset = 0;
+        for (let i = 0; i < salesUsers.length; i++) {
+          const count = perUser + (i < remainder ? 1 : 0);
+          if (count === 0) continue;
+          const chunk = selectedArr.slice(offset, offset + count);
+          offset += count;
+          await api.post('/leads/bulk-assign', {
+            lead_ids: chunk,
+            assigned_to: salesUsers[i].id,
+          });
+        }
+        if (Platform.OS === 'web') window.alert(`${selectedArr.length} leads distributed across ${salesUsers.length} reps!`);
+        else Alert.alert('Done', `${selectedArr.length} leads distributed across ${salesUsers.length} reps!`);
+        setSelected(new Set());
+        setSelectMode(false);
+        loadLeads();
+      } catch (e: any) {
+        const errMsg = e.response?.data?.detail || 'Distribution failed';
+        if (Platform.OS === 'web') window.alert(`Error: ${errMsg}`);
+        else Alert.alert('Error', errMsg);
+      } finally {
+        setAssigning(false);
+      }
+    };
+
+    if (Platform.OS === 'web') {
+      if (window.confirm(msg)) doDistribute();
+    } else {
+      Alert.alert('Distribute Equally', msg, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Distribute', onPress: doDistribute },
+      ]);
+    }
+  };
+
   const renderItem = ({ item }: { item: any }) => (
     <TouchableOpacity
       style={[styles.row, selectMode && selected.has(item.id) && styles.rowSelected]}
@@ -185,15 +235,28 @@ export default function AdminLeads() {
       {/* Bulk assign bar */}
       {selectMode && selected.size > 0 && (
         <View style={styles.bulkBar}>
-          <TouchableOpacity onPress={selectAll} style={styles.selectAllBtn}>
-            <Ionicons name="checkmark-done" size={16} color={Colors.primary} />
-            <Text style={styles.selectAllText}>
-              {selected.size === leads.length ? 'Deselect All' : 'Select All'}
-            </Text>
-          </TouchableOpacity>
-          <Text style={styles.bulkCount}>{selected.size} selected</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }}>
+          <View style={styles.bulkTopRow}>
+            <TouchableOpacity onPress={selectAll} style={styles.selectAllBtn}>
+              <Ionicons name="checkmark-done" size={16} color={Colors.primary} />
+              <Text style={styles.selectAllText}>
+                {selected.size === leads.length ? 'Deselect All' : 'Select All'}
+              </Text>
+            </TouchableOpacity>
+            <Text style={styles.bulkCount}>{selected.size} selected</Text>
+            {salesUsers.length > 1 && (
+              <TouchableOpacity
+                style={styles.distributeBtn}
+                onPress={distributeEqually}
+                disabled={assigning}
+              >
+                <Ionicons name="git-branch-outline" size={14} color="#FFF" />
+                <Text style={styles.distributeBtnText}>Distribute Equally</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
             <View style={styles.assignRow}>
+              <Text style={styles.assignLabel}>Assign to:</Text>
               {salesUsers.map(u => (
                 <TouchableOpacity
                   key={u.id} style={styles.assignChip}
@@ -228,8 +291,8 @@ const styles = StyleSheet.create({
     borderRadius: 8, paddingHorizontal: 12, height: 44,
   },
   searchInput: { flex: 1, fontSize: 14, color: Colors.text },
-  filterRow: { maxHeight: 44, marginTop: 10 },
-  filterRow2: { maxHeight: 44, marginTop: 4 },
+  filterRow: { minHeight: 36, maxHeight: 44, marginTop: 10 },
+  filterRow2: { minHeight: 36, maxHeight: 44, marginTop: 4 },
   filterContent: { paddingHorizontal: 16, gap: 8 },
   chip: {
     paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
@@ -240,14 +303,20 @@ const styles = StyleSheet.create({
   chipText: { fontSize: 11, fontWeight: '500', color: Colors.textMuted },
   chipTextActive: { color: '#FFFFFF' },
   bulkBar: {
-    flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: Colors.infoBg, paddingHorizontal: 12, paddingVertical: 8,
-    marginHorizontal: 16, marginTop: 8, borderRadius: 8,
+    marginHorizontal: 16, marginTop: 8, borderRadius: 8, gap: 8,
   },
+  bulkTopRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   selectAllBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   selectAllText: { fontSize: 11, fontWeight: '600', color: Colors.primary },
   bulkCount: { fontSize: 12, fontWeight: '600', color: Colors.text },
-  assignRow: { flexDirection: 'row', gap: 6 },
+  distributeBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 'auto' as any,
+    backgroundColor: Colors.success, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 6,
+  },
+  distributeBtnText: { color: '#FFFFFF', fontSize: 11, fontWeight: '600' },
+  assignLabel: { fontSize: 11, color: Colors.textMuted, fontWeight: '500', alignSelf: 'center' as any },
+  assignRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   assignChip: {
     paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
     backgroundColor: Colors.primary,
