@@ -1,14 +1,17 @@
 import React, { useState, useCallback } from 'react';
 import {
   View, Text, FlatList, StyleSheet, RefreshControl, ActivityIndicator,
+  TouchableOpacity,
 } from 'react-native';
-import { useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Colors } from '@/src/constants/colors';
 import StatusBadge from '@/src/components/StatusBadge';
 import EmptyState from '@/src/components/EmptyState';
 import api from '@/src/api/client';
 
 export default function AdminCalls() {
+  const router = useRouter();
   const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -30,7 +33,11 @@ export default function AdminCalls() {
   };
 
   const renderItem = ({ item }: { item: any }) => (
-    <View style={styles.card}>
+    <TouchableOpacity
+      style={styles.card}
+      onPress={() => item.lead_id ? router.push(`/lead/${item.lead_id}`) : null}
+      activeOpacity={0.7}
+    >
       <View style={styles.cardTop}>
         <View style={styles.cardInfo}>
           <Text style={styles.leadName}>{item.lead_name}</Text>
@@ -49,8 +56,12 @@ export default function AdminCalls() {
       </View>
       <View style={styles.cardBottom}>
         <StatusBadge status={item.recording_status || 'pending'} small />
+        <View style={styles.goLink}>
+          <Text style={styles.goLinkText}>View Lead</Text>
+          <Ionicons name="chevron-forward" size={14} color={Colors.primary} />
+        </View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 
   if (loading) return <ActivityIndicator size="large" color={Colors.primary} style={{ marginTop: 60 }} />;
@@ -79,5 +90,7 @@ const styles = StyleSheet.create({
   pending: { fontSize: 12, color: Colors.warning, fontWeight: '500' },
   cardMeta: { flexDirection: 'row', gap: 16, marginTop: 8 },
   metaItem: { fontSize: 12, color: Colors.textMuted },
-  cardBottom: { marginTop: 8 },
+  cardBottom: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 },
+  goLink: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  goLinkText: { fontSize: 12, color: Colors.primary, fontWeight: '500' },
 });

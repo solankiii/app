@@ -588,6 +588,32 @@ async def update_lead(lead_id: str, req: LeadUpdate, request: Request):
         raise HTTPException(404, "Lead not found")
     return await db.leads.find_one({"id": lead_id}, {"_id": 0})
 
+@api_router.delete("/leads/{lead_id}")
+async def delete_lead(lead_id: str, request: Request):
+    await require_admin(request)
+    result = await db.leads.delete_one({"id": lead_id})
+    if result.deleted_count == 0:
+        raise HTTPException(404, "Lead not found")
+    await db.call_sessions.delete_many({"lead_id": lead_id})
+    await db.lead_notes.delete_many({"lead_id": lead_id})
+    await db.follow_ups.delete_many({"lead_id": lead_id})
+    return {"message": "Lead deleted"}
+
+
+@api_router.post("/leads/bulk-delete")
+async def bulk_delete_leads(request: Request):
+    await require_admin(request)
+    body = await request.json()
+    lead_ids = body.get("lead_ids", [])
+    if not lead_ids:
+        raise HTTPException(400, "No lead IDs provided")
+    result = await db.leads.delete_many({"id": {"$in": lead_ids}})
+    await db.call_sessions.delete_many({"lead_id": {"$in": lead_ids}})
+    await db.lead_notes.delete_many({"lead_id": {"$in": lead_ids}})
+    await db.follow_ups.delete_many({"lead_id": {"$in": lead_ids}})
+    return {"deleted": result.deleted_count}
+
+
 @api_router.patch("/leads/{lead_id}/status")
 async def update_lead_status(lead_id: str, request: Request):
     await get_current_user(request)

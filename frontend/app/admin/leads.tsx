@@ -96,6 +96,35 @@ export default function AdminLeads() {
     }
   };
 
+  const bulkDelete = () => {
+    const msg = `Delete ${selected.size} leads? This cannot be undone.`;
+    const doDelete = async () => {
+      setAssigning(true);
+      try {
+        await api.post('/leads/bulk-delete', { lead_ids: Array.from(selected) });
+        if (Platform.OS === 'web') window.alert(`${selected.size} leads deleted`);
+        else Alert.alert('Done', `${selected.size} leads deleted`);
+        setSelected(new Set());
+        setSelectMode(false);
+        loadLeads();
+      } catch (e: any) {
+        const errMsg = e.response?.data?.detail || 'Delete failed';
+        if (Platform.OS === 'web') window.alert(`Error: ${errMsg}`);
+        else Alert.alert('Error', errMsg);
+      } finally {
+        setAssigning(false);
+      }
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm(msg)) doDelete();
+    } else {
+      Alert.alert('Delete Leads', msg, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: doDelete },
+      ]);
+    }
+  };
+
   const distributeEqually = () => {
     if (salesUsers.length === 0) return;
     const selectedArr = Array.from(selected);
@@ -266,6 +295,14 @@ export default function AdminLeads() {
                   <Text style={styles.assignChipText}>{u.full_name.split(' ')[0]}</Text>
                 </TouchableOpacity>
               ))}
+              <TouchableOpacity
+                style={styles.deleteChip}
+                onPress={bulkDelete}
+                disabled={assigning}
+              >
+                <Ionicons name="trash-outline" size={12} color="#FFF" />
+                <Text style={styles.assignChipText}>Delete</Text>
+              </TouchableOpacity>
             </View>
           </ScrollView>
         </View>
@@ -322,6 +359,11 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.primary,
   },
   assignChipText: { color: '#FFFFFF', fontSize: 11, fontWeight: '600' },
+  deleteChip: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12,
+    backgroundColor: Colors.danger,
+  },
   list: { padding: 16, paddingBottom: 32 },
   row: {
     flexDirection: 'row', alignItems: 'center',

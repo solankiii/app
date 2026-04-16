@@ -178,6 +178,27 @@ export default function LeadDetail() {
     }
   };
 
+  const handleDeleteLead = () => {
+    const msg = `Delete "${lead?.full_name}"? This will remove all calls, notes and follow-ups. Cannot be undone.`;
+    const doDelete = async () => {
+      try {
+        await api.delete(`/leads/${id}`);
+        showMsg('Deleted', 'Lead has been deleted');
+        router.back();
+      } catch (e: any) {
+        showMsg('Error', e.response?.data?.detail || 'Failed to delete');
+      }
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm(msg)) doDelete();
+    } else {
+      Alert.alert('Delete Lead', msg, [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Delete', style: 'destructive', onPress: doDelete },
+      ]);
+    }
+  };
+
   const handleChangeStatus = async (status: string) => {
     try {
       await api.patch(`/leads/${id}/status`, { status });
@@ -256,6 +277,9 @@ export default function LeadDetail() {
         </TouchableOpacity>
         <TouchableOpacity testID="change-status-btn" style={styles.actionBtn} onPress={() => setShowStatusModal(true)}>
           <Ionicons name="swap-horizontal-outline" size={18} color={Colors.primary} />
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.actionBtn, styles.deleteBtn]} onPress={handleDeleteLead}>
+          <Ionicons name="trash-outline" size={18} color={Colors.danger} />
         </TouchableOpacity>
       </View>
 
@@ -517,6 +541,7 @@ const styles = StyleSheet.create({
     width: 44, height: 44, borderRadius: 8, backgroundColor: Colors.surface,
     borderWidth: 1, borderColor: Colors.border, alignItems: 'center', justifyContent: 'center',
   },
+  deleteBtn: { borderColor: Colors.danger },
   tabBar: {
     flexDirection: 'row', backgroundColor: Colors.surface, borderRadius: 8,
     borderWidth: 1, borderColor: Colors.border, marginBottom: 12, overflow: 'hidden',
