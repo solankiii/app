@@ -465,6 +465,24 @@ def _get_csv_field(row: dict, *keys: str) -> str:
     return ""
 
 
+KNOWN_CSV_FIELDS = {
+    "full_name": ["full_name", "name", "full name", "contact name", "contact"],
+    "phone_number": ["phone_number", "phone", "phone number", "phone num", "mobile", "mobile number", "contact number", "mob"],
+    "alternate_phone": ["alternate_phone", "alternate phone", "alt phone", "phone 2", "phone2"],
+    "company_name": ["company_name", "company", "company name", "firm", "business", "organization"],
+    "source": ["source", "lead source", "channel"],
+    "industry": ["industry", "sector", "category", "type"],
+    "city": ["city", "location", "place", "area"],
+    "notes": ["notes", "note", "remarks", "comment", "comments", "description"],
+    "email": ["email", "e-mail", "email address", "mail"],
+    "designation": ["designation", "title", "role", "position", "job title"],
+    "address": ["address", "full address", "street"],
+    "state": ["state", "province", "region"],
+    "pincode": ["pincode", "pin code", "zip", "zip code", "postal code"],
+    "website": ["website", "url", "web"],
+}
+
+
 def _parse_csv_rows(text: str, assigned_to, user_id: str):
     reader = csv.DictReader(io.StringIO(text))
     now = datetime.now(timezone.utc).isoformat()
@@ -473,8 +491,8 @@ def _parse_csv_rows(text: str, assigned_to, user_id: str):
     errors = []
     leads_to_insert = []
     for idx, row in enumerate(reader, start=2):
-        name = _get_csv_field(row, "full_name", "name", "full name", "contact name", "contact")
-        phone = _get_csv_field(row, "phone_number", "phone", "phone number", "phone num", "mobile", "mobile number", "contact number")
+        name = _get_csv_field(row, *KNOWN_CSV_FIELDS["full_name"])
+        phone = _get_csv_field(row, *KNOWN_CSV_FIELDS["phone_number"])
         if not name or not phone:
             skipped += 1
             errors.append(f"Row {idx}: missing name or phone")
@@ -483,18 +501,36 @@ def _parse_csv_rows(text: str, assigned_to, user_id: str):
             "id": str(uuid.uuid4()),
             "full_name": name,
             "phone_number": phone,
-            "alternate_phone": _get_csv_field(row, "alternate_phone", "alternate phone", "alt phone") or None,
-            "company_name": _get_csv_field(row, "company_name", "company", "company name", "firm") or None,
-            "source": _get_csv_field(row, "source") or "direct",
-            "industry": _get_csv_field(row, "industry") or None,
-            "city": _get_csv_field(row, "city", "location") or None,
+            "alternate_phone": _get_csv_field(row, *KNOWN_CSV_FIELDS["alternate_phone"]) or None,
+            "company_name": _get_csv_field(row, *KNOWN_CSV_FIELDS["company_name"]) or None,
+            "source": _get_csv_field(row, *KNOWN_CSV_FIELDS["source"]) or "direct",
+            "industry": _get_csv_field(row, *KNOWN_CSV_FIELDS["industry"]) or None,
+            "city": _get_csv_field(row, *KNOWN_CSV_FIELDS["city"]) or None,
             "status": "new",
             "assigned_to": assigned_to,
-            "notes": _get_csv_field(row, "notes", "note", "remarks") or None,
+            "notes": _get_csv_field(row, *KNOWN_CSV_FIELDS["notes"]) or None,
+            "email": _get_csv_field(row, *KNOWN_CSV_FIELDS["email"]) or None,
+            "designation": _get_csv_field(row, *KNOWN_CSV_FIELDS["designation"]) or None,
+            "address": _get_csv_field(row, *KNOWN_CSV_FIELDS["address"]) or None,
+            "state": _get_csv_field(row, *KNOWN_CSV_FIELDS["state"]) or None,
+            "pincode": _get_csv_field(row, *KNOWN_CSV_FIELDS["pincode"]) or None,
+            "website": _get_csv_field(row, *KNOWN_CSV_FIELDS["website"]) or None,
             "created_by": user_id,
             "created_at": now,
             "updated_at": now,
         }
+        # Store any extra columns not matched above
+        lower_map = {k.strip().lower(): k for k in row.keys() if k}
+        matched_lower = set()
+        for aliases in KNOWN_CSV_FIELDS.values():
+            for a in aliases:
+                matched_lower.add(a.lower())
+        extra = {}
+        for lk, orig_k in lower_map.items():
+            if lk not in matched_lower and row[orig_k] and row[orig_k].strip():
+                extra[orig_k.strip()] = row[orig_k].strip()
+        if extra:
+            lead["extra_fields"] = extra
         leads_to_insert.append(lead)
         created += 1
     return leads_to_insert, created, skipped, errors

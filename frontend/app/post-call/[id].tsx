@@ -13,6 +13,27 @@ const OUTCOMES = [
 ];
 const LEAD_STATUSES = ['new', 'contacted', 'interested', 'follow_up', 'won', 'lost'];
 
+const showMsg = (title: string, msg: string) => {
+  if (Platform.OS === 'web') window.alert(`${title}: ${msg}`);
+  else Alert.alert(title, msg);
+};
+
+const getQuickDates = () => {
+  const today = new Date();
+  const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+  const in3days = new Date(today); in3days.setDate(today.getDate() + 3);
+  const nextWeek = new Date(today); nextWeek.setDate(today.getDate() + 7);
+  const in2weeks = new Date(today); in2weeks.setDate(today.getDate() + 14);
+  const fmt = (d: Date) => d.toISOString().split('T')[0];
+  const label = (d: Date) => d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', weekday: 'short' });
+  return [
+    { label: 'Tomorrow', sublabel: label(tomorrow), value: fmt(tomorrow) },
+    { label: 'In 3 days', sublabel: label(in3days), value: fmt(in3days) },
+    { label: 'Next week', sublabel: label(nextWeek), value: fmt(nextWeek) },
+    { label: 'In 2 weeks', sublabel: label(in2weeks), value: fmt(in2weeks) },
+  ];
+};
+
 export default function PostCallForm() {
   const { id: sessionId } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
@@ -21,15 +42,16 @@ export default function PostCallForm() {
     outcome: '',
     duration_seconds: '',
     call_notes: '',
-    next_follow_up_at: '',
     lead_status: 'contacted',
   });
+  const [fuDate, setFuDate] = useState('');
+  const [fuTime, setFuTime] = useState('10:00');
 
   const update = (key: string, val: string) => setForm(prev => ({ ...prev, [key]: val }));
 
   const handleSave = async () => {
     if (!form.outcome) {
-      Alert.alert('Error', 'Please select a call outcome');
+      showMsg('Error', 'Please select a call outcome');
       return;
     }
     setLoading(true);
@@ -42,14 +64,14 @@ export default function PostCallForm() {
       if (form.duration_seconds) {
         payload.duration_seconds = parseInt(form.duration_seconds, 10);
       }
-      if (form.next_follow_up_at) {
-        payload.next_follow_up_at = new Date(form.next_follow_up_at.replace(' ', 'T')).toISOString();
+      if (fuDate) {
+        payload.next_follow_up_at = new Date(`${fuDate}T${fuTime || '10:00'}`).toISOString();
       }
       await api.put(`/call-sessions/${sessionId}`, payload);
-      Alert.alert('Success', 'Call session updated');
+      showMsg('Success', 'Call session updated');
       router.back();
     } catch (e: any) {
-      Alert.alert('Error', e.response?.data?.detail || 'Failed to save');
+      showMsg('Error', e.response?.data?.detail || 'Failed to save');
     } finally {
       setLoading(false);
     }
@@ -104,14 +126,38 @@ export default function PostCallForm() {
         </View>
 
         <View style={styles.field}>
-          <Text style={styles.label}>Next Follow-up (YYYY-MM-DD HH:MM)</Text>
+          <Text style={styles.label}>Next Follow-up</Text>
+          <View style={styles.quickDateRow}>
+            {getQuickDates().map(qd => (
+              <TouchableOpacity
+                key={qd.value}
+                style={[styles.quickDateChip, fuDate === qd.value && styles.quickDateChipActive]}
+                onPress={() => setFuDate(fuDate === qd.value ? '' : qd.value)}
+              >
+                <Text style={[styles.quickDateLabel, fuDate === qd.value && styles.activeText]}>{qd.label}</Text>
+                <Text style={[styles.quickDateSub, fuDate === qd.value && styles.activeSubText]}>{qd.sublabel}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
           <TextInput
-            testID="follow-up-date-input"
-            style={styles.input}
-            value={form.next_follow_up_at}
-            onChangeText={v => update('next_follow_up_at', v)}
-            placeholder="Leave empty if none"
+            style={[styles.input, { marginTop: 8 }]}
+            value={fuDate}
+            onChangeText={setFuDate}
+            placeholder="Or type: YYYY-MM-DD"
           />
+          {fuDate ? (
+            <View style={styles.timeRow}>
+              {['09:00', '10:00', '11:00', '14:00', '16:00', '18:00'].map(t => (
+                <TouchableOpacity
+                  key={t}
+                  style={[styles.timeChip, fuTime === t && styles.chipActive]}
+                  onPress={() => setFuTime(t)}
+                >
+                  <Text style={[styles.chipText, fuTime === t && styles.chipTextActive]}>{t}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          ) : null}
         </View>
 
         <View style={styles.field}>
@@ -164,6 +210,22 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   chipText: { fontSize: 12, fontWeight: '500', color: Colors.textMuted },
   chipTextActive: { color: '#FFFFFF' },
+  quickDateRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  quickDateChip: {
+    flex: 1, minWidth: 70, paddingVertical: 10, paddingHorizontal: 8, borderRadius: 8,
+    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  quickDateChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  quickDateLabel: { fontSize: 12, fontWeight: '600', color: Colors.text },
+  quickDateSub: { fontSize: 10, color: Colors.textMuted, marginTop: 2 },
+  activeText: { color: '#FFFFFF' },
+  activeSubText: { color: 'rgba(255,255,255,0.8)' },
+  timeRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap', marginTop: 8 },
+  timeChip: {
+    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
+    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
+  },
   saveBtn: {
     backgroundColor: Colors.primary, height: 48, borderRadius: 8,
     alignItems: 'center', justifyContent: 'center', marginTop: 8,

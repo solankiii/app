@@ -44,7 +44,7 @@ export default function LoginScreen() {
         <View style={styles.container}>
           <View style={styles.header}>
             <View style={styles.logoBox}>
-              <Text style={styles.logoText}>ah</Text>
+              <Text style={styles.logoText}>AHM</Text>
             </View>
             <Text style={styles.title}>AHM Sales CRM</Text>
             <Text style={styles.subtitle}>Sign in to your account</Text>
@@ -137,8 +137,8 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   logoText: {
-    fontSize: 28, fontWeight: '300', color: '#FFFFFF',
-    fontStyle: 'italic', letterSpacing: -1,
+    fontSize: 22, fontWeight: '800', color: '#FFFFFF',
+    letterSpacing: 1,
   },
   title: { fontSize: 28, fontWeight: '700', color: Colors.text },
   subtitle: { fontSize: 14, color: Colors.textMuted, marginTop: 4 },
