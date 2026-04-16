@@ -492,6 +492,49 @@ async def upload_leads_csv(request: Request, file: UploadFile = File(...), assig
         created += 1
     return {"created": created, "skipped": skipped, "errors": errors[:20]}
 
+
+@api_router.post("/leads/upload-csv-text")
+async def upload_leads_csv_text(request: Request):
+    user = await require_admin(request)
+    body = await request.json()
+    csv_text = body.get("csv_text", "")
+    assigned_to = body.get("assigned_to") or None
+    if not csv_text.strip():
+        raise HTTPException(400, "No CSV text provided")
+    text = csv_text.lstrip("\ufeff")
+    reader = csv.DictReader(io.StringIO(text))
+    now = datetime.now(timezone.utc).isoformat()
+    created = 0
+    skipped = 0
+    errors = []
+    for idx, row in enumerate(reader, start=2):
+        name = (row.get("full_name") or row.get("name") or row.get("Full Name") or "").strip()
+        phone = (row.get("phone_number") or row.get("phone") or row.get("Phone") or row.get("Phone Number") or "").strip()
+        if not name or not phone:
+            skipped += 1
+            errors.append(f"Row {idx}: missing name or phone")
+            continue
+        lead = {
+            "id": str(uuid.uuid4()),
+            "full_name": name,
+            "phone_number": phone,
+            "alternate_phone": (row.get("alternate_phone") or row.get("Alternate Phone") or "").strip() or None,
+            "company_name": (row.get("company_name") or row.get("company") or row.get("Company") or "").strip() or None,
+            "source": (row.get("source") or row.get("Source") or "direct").strip(),
+            "industry": (row.get("industry") or row.get("Industry") or "").strip() or None,
+            "city": (row.get("city") or row.get("City") or "").strip() or None,
+            "status": "new",
+            "assigned_to": assigned_to,
+            "notes": (row.get("notes") or row.get("Notes") or "").strip() or None,
+            "created_by": user["id"],
+            "created_at": now,
+            "updated_at": now,
+        }
+        await db.leads.insert_one(lead)
+        created += 1
+    return {"created": created, "skipped": skipped, "errors": errors[:20]}
+
+
 @api_router.post("/leads/bulk-assign")
 async def bulk_assign_leads(request: Request):
     await require_admin(request)
