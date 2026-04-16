@@ -5,6 +5,7 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/src/constants/colors';
 import api from '@/src/api/client';
 
@@ -21,28 +22,62 @@ export default function UploadLeadsScreen() {
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [debugLog, setDebugLog] = useState<string[]>([]);
+
+  const addLog = (msg: string) => {
+    setDebugLog(prev => [...prev, `${new Date().toLocaleTimeString()}: ${msg}`]);
+  };
 
   useEffect(() => {
     api.get('/users/sales').then(res => setSalesUsers(res.data || [])).catch(() => {});
   }, []);
 
   const pickAndUpload = async () => {
+    setDebugLog([]);
+
     try {
+      const baseURL = api.defaults.baseURL || '';
+      const token = await AsyncStorage.getItem('auth_token');
+      addLog(`baseURL: "${baseURL}"`);
+      addLog(`token present: ${!!token}, length: ${token?.length || 0}`);
+      addLog(`Platform: ${Platform.OS}`);
+
       const doc = await DocumentPicker.getDocumentAsync({
         type: ['text/csv', 'text/comma-separated-values', 'application/vnd.ms-excel', '*/*'],
         copyToCacheDirectory: true,
       });
-      if (doc.canceled || !doc.assets?.length) return;
+      if (doc.canceled || !doc.assets?.length) {
+        addLog('File picker cancelled');
+        return;
+      }
       const file = doc.assets[0];
+      addLog(`File: ${file.name}, size: ${file.size}, type: ${file.mimeType}`);
+      addLog(`File URI: ${file.uri?.substring(0, 80)}...`);
 
       setUploading(true);
       setResult(null);
 
+      const uploadUrl = `${baseURL}/leads/upload-csv`;
+      addLog(`Upload URL: "${uploadUrl}"`);
+
+      // First test: can we even reach the backend?
+      try {
+        const healthUrl = baseURL.replace(/\/api$/, '') + '/health';
+        addLog(`Testing connectivity: ${healthUrl}`);
+        const healthRes = await fetch(healthUrl);
+        const healthData = await healthRes.text();
+        addLog(`Health check: ${healthRes.status} - ${healthData}`);
+      } catch (healthErr: any) {
+        addLog(`Health check FAILED: ${healthErr.message}`);
+      }
+
       const formData = new FormData();
 
       if (Platform.OS === 'web') {
+        // Get the file as blob
         const response = await fetch(file.uri);
         const blob = await response.blob();
+        addLog(`Blob created: size=${blob.size}, type=${blob.type}`);
         formData.append('file', blob, file.name || 'leads.csv');
       } else {
         formData.append('file', {
@@ -56,13 +91,65 @@ export default function UploadLeadsScreen() {
         formData.append('assigned_to', selectedUser);
       }
 
-      const res = await api.post('/leads/upload-csv', formData, {
-        timeout: 60000,
-      });
-      setResult(res.data);
-      if (res.data.created > 0) showMessage('Success', `${res.data.created} leads imported!`);
+      // Use XMLHttpRequest on web for maximum compatibility
+      if (Platform.OS === 'web') {
+        addLog('Using XMLHttpRequest for upload...');
+        const xhrResult = await new Promise<any>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', uploadUrl);
+          xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+          xhr.timeout = 60000;
+
+          xhr.onload = () => {
+            addLog(`XHR status: ${xhr.status}`);
+            addLog(`XHR response: ${xhr.responseText.substring(0, 200)}`);
+            if (xhr.status >= 200 && xhr.status < 300) {
+              try {
+                resolve(JSON.parse(xhr.responseText));
+              } catch {
+                reject(new Error(`Invalid JSON: ${xhr.responseText.substring(0, 100)}`));
+              }
+            } else {
+              reject(new Error(`HTTP ${xhr.status}: ${xhr.responseText.substring(0, 200)}`));
+            }
+          };
+
+          xhr.onerror = () => {
+            addLog(`XHR onerror triggered. readyState: ${xhr.readyState}, status: ${xhr.status}`);
+            reject(new Error(`XHR Network Error (readyState: ${xhr.readyState})`));
+          };
+
+          xhr.ontimeout = () => {
+            addLog('XHR timeout');
+            reject(new Error('Upload timed out'));
+          };
+
+          xhr.upload.onprogress = (e) => {
+            if (e.lengthComputable) {
+              addLog(`Upload progress: ${Math.round((e.loaded / e.total) * 100)}%`);
+            }
+          };
+
+          xhr.send(formData);
+        });
+
+        setResult(xhrResult);
+        if (xhrResult.created > 0) showMessage('Success', `${xhrResult.created} leads imported!`);
+      } else {
+        // Mobile: use axios as before
+        const res = await api.post('/leads/upload-csv', formData, {
+          timeout: 60000,
+        });
+        setResult(res.data);
+        if (res.data.created > 0) showMessage('Success', `${res.data.created} leads imported!`);
+      }
     } catch (e: any) {
       console.error('Upload error:', e);
+      addLog(`ERROR: ${e.message}`);
+      if (e.response) {
+        addLog(`Response status: ${e.response.status}`);
+        addLog(`Response data: ${JSON.stringify(e.response.data).substring(0, 200)}`);
+      }
       showMessage('Error', e.response?.data?.detail || e.message || 'Upload failed');
     } finally {
       setUploading(false);
@@ -118,6 +205,15 @@ export default function UploadLeadsScreen() {
           </>
         )}
       </TouchableOpacity>
+
+      {debugLog.length > 0 && (
+        <View style={styles.debugCard}>
+          <Text style={styles.debugTitle}>Debug Log</Text>
+          {debugLog.map((log, i) => (
+            <Text key={i} style={styles.debugText} selectable>{log}</Text>
+          ))}
+        </View>
+      )}
 
       {result && (
         <View style={styles.resultCard}>
@@ -191,4 +287,9 @@ const styles = StyleSheet.create({
   },
   templateTitle: { fontSize: 14, fontWeight: '600', color: Colors.text, marginBottom: 8 },
   templateText: { fontSize: 11, color: Colors.textMuted, fontFamily: Platform.OS === 'web' ? 'monospace' : undefined },
+  debugCard: {
+    backgroundColor: '#1a1a2e', borderRadius: 8, padding: 12, marginBottom: 16,
+  },
+  debugTitle: { fontSize: 13, fontWeight: '700', color: '#00ff88', marginBottom: 8 },
+  debugText: { fontSize: 10, color: '#e0e0e0', fontFamily: Platform.OS === 'web' ? 'monospace' : undefined, marginBottom: 2 },
 });
