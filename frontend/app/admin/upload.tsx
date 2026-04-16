@@ -5,7 +5,6 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors } from '@/src/constants/colors';
 import api from '@/src/api/client';
 
@@ -57,29 +56,11 @@ export default function UploadLeadsScreen() {
         formData.append('assigned_to', selectedUser);
       }
 
-      // Get auth token and backend URL
-      const token = await AsyncStorage.getItem('auth_token');
-      const baseURL = (api.defaults.baseURL || '').replace(/\/api$/, '');
-
-      if (Platform.OS === 'web') {
-        // Use native fetch on web — axios mangles FormData
-        const fetchRes = await fetch(`${baseURL}/api/leads/upload-csv`, {
-          method: 'POST',
-          headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
-          body: formData,
-        });
-        const data = await fetchRes.json();
-        if (!fetchRes.ok) throw new Error(data.detail || `Upload failed (${fetchRes.status})`);
-        setResult(data);
-        if (data.created > 0) showMessage('Success', `${data.created} leads imported!`);
-      } else {
-        const res = await api.post('/leads/upload-csv', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 60000,
-        });
-        setResult(res.data);
-        if (res.data.created > 0) showMessage('Success', `${res.data.created} leads imported!`);
-      }
+      const res = await api.post('/leads/upload-csv', formData, {
+        timeout: 60000,
+      });
+      setResult(res.data);
+      if (res.data.created > 0) showMessage('Success', `${res.data.created} leads imported!`);
     } catch (e: any) {
       console.error('Upload error:', e);
       showMessage('Error', e.response?.data?.detail || e.message || 'Upload failed');
