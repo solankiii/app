@@ -471,7 +471,7 @@ KNOWN_CSV_FIELDS = {
     "alternate_phone": ["alternate_phone", "alternate phone", "alt phone", "phone 2", "phone2"],
     "company_name": ["company_name", "company", "company name", "firm", "business", "organization"],
     "source": ["source", "lead source", "channel"],
-    "industry": ["industry", "sector", "category", "type"],
+    "industry": ["industry", "sector", "category", "type", "business type"],
     "city": ["city", "location", "place", "area"],
     "notes": ["notes", "note", "remarks", "comment", "comments", "description"],
     "email": ["email", "e-mail", "email address", "mail"],
@@ -480,6 +480,8 @@ KNOWN_CSV_FIELDS = {
     "state": ["state", "province", "region"],
     "pincode": ["pincode", "pin code", "zip", "zip code", "postal code"],
     "website": ["website", "url", "web"],
+    "rating": ["rating", "ratings", "total reviews", "reviews"],
+    "google_maps_link": ["google maps link", "maps link", "google maps url", "maps url"],
 }
 
 
@@ -515,6 +517,8 @@ def _parse_csv_rows(text: str, assigned_to, user_id: str):
             "state": _get_csv_field(row, *KNOWN_CSV_FIELDS["state"]) or None,
             "pincode": _get_csv_field(row, *KNOWN_CSV_FIELDS["pincode"]) or None,
             "website": _get_csv_field(row, *KNOWN_CSV_FIELDS["website"]) or None,
+            "rating": _get_csv_field(row, *KNOWN_CSV_FIELDS["rating"]) or None,
+            "google_maps_link": _get_csv_field(row, *KNOWN_CSV_FIELDS["google_maps_link"]) or None,
             "created_by": user_id,
             "created_at": now,
             "updated_at": now,
@@ -542,8 +546,8 @@ async def upload_leads_csv(request: Request, file: UploadFile = File(...), assig
     contents = await file.read()
     text = contents.decode("utf-8-sig")
     leads_to_insert, created, skipped, errors = _parse_csv_rows(text, assigned_to or None, user["id"])
-    for lead in leads_to_insert:
-        await db.leads.insert_one(lead)
+    if leads_to_insert:
+        await db.leads.insert_many(leads_to_insert)
     return {"created": created, "skipped": skipped, "errors": errors[:20]}
 
 
@@ -557,8 +561,8 @@ async def upload_leads_csv_text(request: Request):
         raise HTTPException(400, "No CSV text provided")
     text = csv_text.lstrip("\ufeff")
     leads_to_insert, created, skipped, errors = _parse_csv_rows(text, assigned_to, user["id"])
-    for lead in leads_to_insert:
-        await db.leads.insert_one(lead)
+    if leads_to_insert:
+        await db.leads.insert_many(leads_to_insert)
     return {"created": created, "skipped": skipped, "errors": errors[:20]}
 
 

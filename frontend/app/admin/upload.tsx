@@ -60,7 +60,7 @@ export default function UploadLeadsScreen() {
         res = await api.post('/leads/upload-csv-text', {
           csv_text: csvText,
           assigned_to: selectedUser || undefined,
-        }, { timeout: 60000 });
+        }, { timeout: 180000 });
       } else {
         // Mobile: use FormData (works fine on native)
         const formData = new FormData();
@@ -72,7 +72,7 @@ export default function UploadLeadsScreen() {
         if (selectedUser) {
           formData.append('assigned_to', selectedUser);
         }
-        res = await api.post('/leads/upload-csv', formData, { timeout: 60000 });
+        res = await api.post('/leads/upload-csv', formData, { timeout: 180000 });
       }
 
       setResult(res.data);
