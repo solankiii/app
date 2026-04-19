@@ -196,9 +196,14 @@ export default function AdminLeads() {
       )}
       <View style={{ flex: 1 }}>
         <View style={styles.rowMain}>
-          <Text style={styles.name}>{item.full_name}</Text>
+          <Text style={styles.name} numberOfLines={1}>
+            {item.company_name || item.full_name || '(no name)'}
+          </Text>
           <Text style={styles.phone}>{item.phone_number}</Text>
         </View>
+        {item.company_name && item.full_name ? (
+          <Text style={styles.contactName} numberOfLines={1}>{item.full_name}</Text>
+        ) : null}
         <View style={styles.rowMeta}>
           <StatusBadge status={item.status} small />
           {item.industry ? <Text style={styles.industry}>{item.industry}</Text> : null}
@@ -371,9 +376,10 @@ const styles = StyleSheet.create({
     borderRadius: 8, padding: 14, marginBottom: 8,
   },
   rowSelected: { borderColor: Colors.primary, backgroundColor: '#F0FDF4' },
-  rowMain: { marginBottom: 6 },
-  name: { fontSize: 14, fontWeight: '600', color: Colors.text },
-  phone: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
+  rowMain: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6, flexWrap: 'wrap' },
+  name: { fontSize: 15, fontWeight: '700', color: Colors.text, flexShrink: 1 },
+  phone: { fontSize: 12, color: Colors.textMuted },
+  contactName: { fontSize: 12, color: Colors.textMuted, marginBottom: 4 },
   rowMeta: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   industry: { fontSize: 11, color: Colors.accent, fontWeight: '500', backgroundColor: '#FDF2F2', paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
   assigned: { fontSize: 11, color: Colors.textMuted },
