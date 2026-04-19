@@ -20,6 +20,9 @@ import uuid
 import bcrypt
 import jwt
 import base64
+import re
+import asyncio
+import httpx
 from datetime import datetime, timezone, timedelta
 from pydantic import BaseModel
 from typing import List, Optional
@@ -564,6 +567,330 @@ async def upload_leads_csv_text(request: Request):
     if leads_to_insert:
         await db.leads.insert_many(leads_to_insert)
     return {"created": created, "skipped": skipped, "errors": errors[:20]}
+
+
+# ─── BulkLead: Google Places API lead generator ──────────────────────
+
+PLACES_API_URL = "https://places.googleapis.com/v1/places:searchText"
+PLACES_FIELD_MASK = (
+    "places.displayName,places.formattedAddress,places.nationalPhoneNumber,"
+    "places.internationalPhoneNumber,places.rating,places.userRatingCount,"
+    "places.websiteUri,places.businessStatus,places.currentOpeningHours,"
+    "places.googleMapsUri"
+)
+
+
+def _nearby_areas(city: str) -> List[str]:
+    c = city.lower()
+    if "pune" in c:
+        return [
+            "Pune Baner", "Pune Koregaon Park", "Pune Viman Nagar",
+            "Pune Wakad", "Pune Hinjewadi", "Pune Kharadi",
+            "Pune Hadapsar", "Pune Magarpatta", "Pune Aundh",
+            "Pune Shivajinagar", "Pune Camp", "Pune Deccan",
+        ]
+    if "mumbai" in c:
+        return [
+            "Mumbai Andheri", "Mumbai Bandra", "Mumbai Juhu",
+            "Mumbai Powai", "Mumbai Thane", "Mumbai Borivali",
+            "Mumbai Malad", "Mumbai Goregaon", "Mumbai Kandivali",
+            "Mumbai Navi Mumbai", "Mumbai Dadar", "Mumbai Kurla",
+        ]
+    if "delhi" in c:
+        return [
+            "Delhi Connaught Place", "Delhi Saket", "Delhi Dwarka",
+            "Delhi Rohini", "Delhi Lajpat Nagar", "Delhi Karol Bagh",
+            "Delhi Vasant Kunj", "Delhi Nehru Place",
+        ]
+    if "bangalore" in c or "bengaluru" in c:
+        return [
+            "Bangalore Koramangala", "Bangalore Indiranagar", "Bangalore Whitefield",
+            "Bangalore Electronic City", "Bangalore HSR Layout", "Bangalore Marathahalli",
+            "Bangalore Jayanagar", "Bangalore BTM Layout",
+        ]
+    return [f"{city} downtown", f"{city} central", f"{city} main area"]
+
+
+def _clean_phone_number(phone: str) -> str:
+    if not phone or phone == "Not Available":
+        return phone or "Not Available"
+    cleaned = re.sub(r"[^\d+]", "", phone)
+    if cleaned.startswith("+91"):
+        return cleaned
+    if cleaned.startswith("91") and len(cleaned) == 12:
+        return "+" + cleaned
+    if len(cleaned) == 10:
+        return "+91" + cleaned
+    return phone
+
+
+async def _test_places_api_key(api_key: str):
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": "places.displayName",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10) as client_http:
+            r = await client_http.post(
+                PLACES_API_URL, headers=headers, json={"textQuery": "test restaurant"}
+            )
+        if r.status_code == 200:
+            return True, "API key is valid"
+        msg = r.json().get("error", {}).get("message", "Unknown error")
+        return False, f"API error: {msg}"
+    except Exception as e:
+        return False, f"Connection error: {e}"
+
+
+async def _places_search_single(client_http: httpx.AsyncClient, api_key: str, query: str, max_results: int = 20):
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": api_key,
+        "X-Goog-FieldMask": PLACES_FIELD_MASK,
+    }
+    try:
+        r = await client_http.post(
+            PLACES_API_URL,
+            headers=headers,
+            json={"textQuery": query, "maxResultCount": min(max_results, 20)},
+        )
+        if r.status_code != 200:
+            return []
+        places = r.json().get("places", [])
+    except Exception:
+        return []
+
+    out = []
+    for p in places:
+        opening = p.get("currentOpeningHours", {}) or {}
+        currently_open = "Unknown"
+        if "openNow" in opening:
+            currently_open = "Yes" if opening["openNow"] else "No"
+        out.append({
+            "name": (p.get("displayName") or {}).get("text", ""),
+            "phone": p.get("nationalPhoneNumber") or p.get("internationalPhoneNumber") or "Not Available",
+            "address": p.get("formattedAddress", ""),
+            "rating": p.get("rating"),
+            "total_reviews": p.get("userRatingCount"),
+            "website": p.get("websiteUri") or "Not Available",
+            "maps_link": p.get("googleMapsUri") or "Not Available",
+            "business_status": p.get("businessStatus", "Unknown"),
+            "currently_open": currently_open,
+        })
+    return out
+
+
+async def _places_search_comprehensive(api_key: str, business_type: str, city: str, target_count: int):
+    all_biz = []
+    seen = set()
+
+    async def add_batch(batch):
+        nonlocal all_biz, seen
+        for b in batch:
+            key = b["name"].lower().strip()
+            if key and key not in seen and len(all_biz) < target_count:
+                seen.add(key)
+                all_biz.append(b)
+
+    async with httpx.AsyncClient(timeout=20) as client_http:
+        # Strategy 1: direct
+        await add_batch(await _places_search_single(client_http, api_key, f"{business_type} in {city}", 20))
+        if len(all_biz) < target_count:
+            await asyncio.sleep(1)
+
+        # Strategy 2: location variations
+        variations = [
+            f"{business_type} near {city}",
+            f"{business_type} {city} center",
+            f"{business_type} downtown {city}",
+            f"best {business_type} in {city}",
+            f"top {business_type} {city}",
+            f"{business_type} services {city}",
+            f"professional {business_type} {city}",
+        ]
+        for q in variations:
+            if len(all_biz) >= target_count:
+                break
+            await add_batch(await _places_search_single(client_http, api_key, q, 20))
+            await asyncio.sleep(1)
+
+        # Strategy 3: nearby areas
+        if len(all_biz) < target_count:
+            for area in _nearby_areas(city):
+                if len(all_biz) >= target_count:
+                    break
+                await add_batch(await _places_search_single(client_http, api_key, f"{business_type} in {area}", 20))
+                await asyncio.sleep(1)
+
+        # Strategy 4: additional terms
+        if len(all_biz) < target_count:
+            extras = [
+                f"popular {business_type} {city}",
+                f"rated {business_type} {city}",
+                f"local {business_type} {city}",
+                f"{business_type} shops {city}",
+                f"{business_type} stores {city}",
+            ]
+            for q in extras:
+                if len(all_biz) >= target_count:
+                    break
+                await add_batch(await _places_search_single(client_http, api_key, q, 20))
+                await asyncio.sleep(1)
+
+    return all_biz[:target_count]
+
+
+def _business_to_lead_row(b: dict, city: str, business_type: str) -> dict:
+    """Convert a raw Places result into the CRM lead schema."""
+    notes_parts = []
+    if b.get("rating") not in (None, "", "N/A"):
+        notes_parts.append(f"Rating: {b['rating']}")
+    if b.get("total_reviews") not in (None, "", "N/A"):
+        notes_parts.append(f"Reviews: {b['total_reviews']}")
+    if b.get("website") and b["website"] != "Not Available":
+        notes_parts.append(f"Website: {b['website']}")
+    if b.get("business_status") and b["business_status"] != "Unknown":
+        notes_parts.append(f"Status: {b['business_status']}")
+    if b.get("currently_open") and b["currently_open"] != "Unknown":
+        notes_parts.append(f"Open: {b['currently_open']}")
+
+    return {
+        "full_name": "",
+        "phone_number": _clean_phone_number(b.get("phone", "")),
+        "company_name": b.get("name", ""),
+        "city": city,
+        "source": "Google Maps",
+        "industry": business_type,
+        "notes": " | ".join(notes_parts) or None,
+        "address": b.get("address") or None,
+        "website": b.get("website") if b.get("website") != "Not Available" else None,
+        "rating": b.get("rating"),
+        "total_reviews": b.get("total_reviews"),
+        "google_maps_link": b.get("maps_link") if b.get("maps_link") != "Not Available" else None,
+        "business_status": b.get("business_status"),
+        "currently_open": b.get("currently_open"),
+    }
+
+
+@api_router.post("/leads/test-places-key")
+async def test_places_key(request: Request):
+    await require_admin(request)
+    body = await request.json()
+    api_key = (body.get("api_key") or "").strip()
+    if not api_key:
+        raise HTTPException(400, "api_key required")
+    ok, msg = await _test_places_api_key(api_key)
+    return {"ok": ok, "message": msg}
+
+
+@api_router.post("/leads/generate-preview")
+async def generate_leads_preview(request: Request):
+    await require_admin(request)
+    body = await request.json()
+    api_key = (body.get("api_key") or "").strip()
+    cities = [c.strip() for c in (body.get("cities") or []) if c and c.strip()]
+    business_types = body.get("business_types") or []
+    comprehensive = bool(body.get("comprehensive", True))
+    filter_rating = bool(body.get("filter_rating"))
+    min_rating = float(body.get("min_rating") or 0)
+    filter_reviews = bool(body.get("filter_reviews"))
+    min_reviews = int(body.get("min_reviews") or 0)
+    filter_phone = bool(body.get("filter_phone"))
+
+    if not api_key:
+        raise HTTPException(400, "api_key required")
+    if not cities:
+        raise HTTPException(400, "At least one city required")
+    if not business_types:
+        raise HTTPException(400, "At least one business type required")
+
+    combos = []
+    total = 0
+    total_api_calls = 0
+
+    for city in cities:
+        for bt in business_types:
+            bt_name = (bt.get("name") or "").strip()
+            target = int(bt.get("count") or 100)
+            if not bt_name:
+                continue
+
+            if comprehensive:
+                raw = await _places_search_comprehensive(api_key, bt_name, city, target)
+            else:
+                async with httpx.AsyncClient(timeout=20) as http:
+                    raw = await _places_search_single(http, api_key, f"{bt_name} in {city}", 20)
+
+            # Apply filters on raw
+            filtered = []
+            for b in raw:
+                if filter_rating:
+                    r = b.get("rating")
+                    if r is None or (isinstance(r, (int, float)) and float(r) < min_rating):
+                        continue
+                if filter_reviews:
+                    tr = b.get("total_reviews")
+                    if tr is None or (isinstance(tr, (int, float)) and int(tr) < min_reviews):
+                        continue
+                if filter_phone and (b.get("phone") in (None, "", "Not Available")):
+                    continue
+                filtered.append(b)
+
+            leads = [_business_to_lead_row(b, city, bt_name) for b in filtered]
+            combos.append({"city": city, "business_type": bt_name, "leads": leads})
+            total += len(leads)
+            # Rough api-call estimate (target/20 + a few overhead)
+            total_api_calls += max(1, (target // 20)) + 5
+
+    estimated_cost = round(total_api_calls * 0.032, 2)
+    return {"combos": combos, "total": total, "estimated_cost": estimated_cost}
+
+
+@api_router.post("/leads/import-generated")
+async def import_generated_leads(request: Request):
+    user = await require_admin(request)
+    body = await request.json()
+    leads_in = body.get("leads") or []
+    assigned_to = body.get("assigned_to") or None
+    if not leads_in:
+        raise HTTPException(400, "No leads to import")
+
+    now = datetime.now(timezone.utc).isoformat()
+    to_insert = []
+    skipped = 0
+    for row in leads_in:
+        phone = (row.get("phone_number") or "").strip()
+        company = (row.get("company_name") or "").strip()
+        if not phone or phone == "Not Available" or not company:
+            skipped += 1
+            continue
+        to_insert.append({
+            "id": str(uuid.uuid4()),
+            "full_name": row.get("full_name") or "",
+            "phone_number": phone,
+            "company_name": company or None,
+            "source": row.get("source") or "Google Maps",
+            "industry": row.get("industry") or None,
+            "city": row.get("city") or None,
+            "status": "new",
+            "assigned_to": assigned_to,
+            "notes": row.get("notes") or None,
+            "address": row.get("address") or None,
+            "website": row.get("website") or None,
+            "rating": row.get("rating"),
+            "total_reviews": row.get("total_reviews"),
+            "google_maps_link": row.get("google_maps_link") or None,
+            "business_status": row.get("business_status") or None,
+            "currently_open": row.get("currently_open") or None,
+            "created_by": user["id"],
+            "created_at": now,
+            "updated_at": now,
+        })
+
+    if to_insert:
+        await db.leads.insert_many(to_insert)
+    return {"created": len(to_insert), "skipped": skipped}
 
 
 @api_router.post("/leads/bulk-assign")

@@ -39,6 +39,10 @@ export default function AdminLayout() {
         title: 'Team',
         tabBarIcon: ({ color, size }) => <Ionicons name="shield-outline" size={size} color={color} />,
       }} />
+      <Tabs.Screen name="bulklead" options={{
+        title: 'BulkLead',
+        tabBarIcon: ({ color, size }) => <Ionicons name="sparkles-outline" size={size} color={color} />,
+      }} />
       <Tabs.Screen name="share" options={{
         title: 'QR Share',
         tabBarIcon: ({ color, size }) => <Ionicons name="qr-code-outline" size={size} color={color} />,
