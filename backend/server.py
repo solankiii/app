@@ -357,12 +357,19 @@ async def list_industries(request: Request):
     industries = await db.leads.distinct("industry")
     return [i for i in industries if i]
 
+@api_router.get("/leads/cities")
+async def list_cities(request: Request):
+    await get_current_user(request)
+    cities = await db.leads.distinct("city")
+    return sorted([c for c in cities if c], key=lambda s: s.lower())
+
 @api_router.get("/leads")
 async def list_leads(
     request: Request,
     status: Optional[str] = None,
     source: Optional[str] = None,
     industry: Optional[str] = None,
+    city: Optional[str] = None,
     assigned_to: Optional[str] = None,
     search: Optional[str] = None,
     limit: int = 50, skip: int = 0
@@ -377,6 +384,8 @@ async def list_leads(
         query["source"] = source
     if industry:
         query["industry"] = industry
+    if city:
+        query["city"] = city
     if assigned_to and user["role"] == "admin":
         query["assigned_to"] = assigned_to
     if search:

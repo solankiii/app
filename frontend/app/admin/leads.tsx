@@ -19,6 +19,8 @@ export default function AdminLeads() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [industryFilter, setIndustryFilter] = useState('all');
   const [industries, setIndustries] = useState<string[]>([]);
+  const [cityFilter, setCityFilter] = useState('all');
+  const [cities, setCities] = useState<string[]>([]);
   const [salesUsers, setSalesUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -30,6 +32,7 @@ export default function AdminLeads() {
 
   useEffect(() => {
     api.get('/leads/industries').then(r => setIndustries(r.data || [])).catch(() => {});
+    api.get('/leads/cities').then(r => setCities(r.data || [])).catch(() => {});
     api.get('/users/sales').then(r => setSalesUsers(r.data || [])).catch(() => {});
   }, []);
 
@@ -39,13 +42,14 @@ export default function AdminLeads() {
       if (search) params.search = search;
       if (statusFilter !== 'all') params.status = statusFilter;
       if (industryFilter !== 'all') params.industry = industryFilter;
+      if (cityFilter !== 'all') params.city = cityFilter;
       const res = await api.get('/leads', { params });
       setLeads(res.data.leads || []);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
 
-  useFocusEffect(useCallback(() => { loadLeads(); }, [search, statusFilter, industryFilter]));
+  useFocusEffect(useCallback(() => { loadLeads(); }, [search, statusFilter, industryFilter, cityFilter]));
   const onRefresh = async () => { setRefreshing(true); await loadLeads(); setRefreshing(false); };
 
   const toggleSelect = (id: string) => {
@@ -266,6 +270,25 @@ export default function AdminLeads() {
         />
       )}
 
+      {/* City filters */}
+      {cities.length > 0 && (
+        <FlatList
+          horizontal data={['all', ...cities]} keyExtractor={i => i}
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterRow2} contentContainerStyle={styles.filterContent}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={[styles.chip, styles.cityChip, cityFilter === item && styles.chipActive]}
+              onPress={() => setCityFilter(item)}
+            >
+              <Text style={[styles.chipText, cityFilter === item && styles.chipTextActive]}>
+                {item === 'all' ? 'All Cities' : item}
+              </Text>
+            </TouchableOpacity>
+          )}
+        />
+      )}
+
       {/* Bulk assign bar */}
       {selectMode && selected.size > 0 && (
         <View style={styles.bulkBar}>
@@ -341,6 +364,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
   },
   industryChip: { borderStyle: 'dashed' as any },
+  cityChip: { borderStyle: 'dotted' as any },
   chipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   chipText: { fontSize: 11, fontWeight: '500', color: Colors.textMuted },
   chipTextActive: { color: '#FFFFFF' },
