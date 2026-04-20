@@ -19,11 +19,14 @@ export default function LeadsScreen() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [industryFilter, setIndustryFilter] = useState('all');
   const [industries, setIndustries] = useState<string[]>([]);
+  const [cityFilter, setCityFilter] = useState('all');
+  const [cities, setCities] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     api.get('/leads/industries').then(r => setIndustries(r.data || [])).catch(() => {});
+    api.get('/leads/cities').then(r => setCities(r.data || [])).catch(() => {});
   }, []);
 
   const loadLeads = async () => {
@@ -32,6 +35,7 @@ export default function LeadsScreen() {
       if (search) params.search = search;
       if (statusFilter !== 'all') params.status = statusFilter;
       if (industryFilter !== 'all') params.industry = industryFilter;
+      if (cityFilter !== 'all') params.city = cityFilter;
       const res = await api.get('/leads', { params });
       setLeads(res.data.leads || []);
     } catch (e) {
@@ -41,7 +45,7 @@ export default function LeadsScreen() {
     }
   };
 
-  useFocusEffect(useCallback(() => { loadLeads(); }, [search, statusFilter, industryFilter]));
+  useFocusEffect(useCallback(() => { loadLeads(); }, [search, statusFilter, industryFilter, cityFilter]));
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -143,6 +147,27 @@ export default function LeadsScreen() {
           )}
         />
       )}
+      {/* City filter */}
+      {cities.length > 0 && (
+        <FlatList
+          horizontal
+          data={['all', ...cities]}
+          keyExtractor={(item) => item}
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterRow2}
+          contentContainerStyle={styles.filterContent}
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              style={[styles.filterChip, styles.cityChip, cityFilter === item && styles.filterChipActive]}
+              onPress={() => setCityFilter(item)}
+            >
+              <Text style={[styles.filterText, cityFilter === item && styles.filterTextActive]}>
+                {item === 'all' ? 'All Cities' : item}
+              </Text>
+            </TouchableOpacity>
+          )}
+        />
+      )}
       {loading ? (
         <ActivityIndicator size="large" color={Colors.primary} style={{ marginTop: 40 }} />
       ) : (
@@ -186,6 +211,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.border,
   },
   industryChip: { borderStyle: 'dashed' as any },
+  cityChip: { borderStyle: 'dotted' as any },
   filterChipActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
   filterText: { fontSize: 12, fontWeight: '500', color: Colors.textMuted },
   filterTextActive: { color: '#FFFFFF' },
