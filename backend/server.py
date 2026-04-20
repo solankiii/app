@@ -375,6 +375,40 @@ async def list_cities(request: Request):
     cities = await db.leads.distinct("city")
     return sorted([c for c in cities if c], key=lambda s: s.lower())
 
+@api_router.get("/leads/ids")
+async def list_lead_ids(
+    request: Request,
+    status: Optional[str] = None,
+    source: Optional[str] = None,
+    industry: Optional[str] = None,
+    city: Optional[str] = None,
+    assigned_to: Optional[str] = None,
+    search: Optional[str] = None,
+):
+    user = await get_current_user(request)
+    query = {}
+    if user["role"] == "sales":
+        query["assigned_to"] = user["id"]
+    if status:
+        query["status"] = status
+    if source:
+        query["source"] = source
+    if industry:
+        query["industry"] = industry
+    if city:
+        query["city"] = city
+    if assigned_to and user["role"] == "admin":
+        query["assigned_to"] = assigned_to
+    if search:
+        query["$or"] = [
+            {"full_name": {"$regex": search, "$options": "i"}},
+            {"phone_number": {"$regex": search, "$options": "i"}},
+            {"company_name": {"$regex": search, "$options": "i"}},
+            {"industry": {"$regex": search, "$options": "i"}}
+        ]
+    cursor = db.leads.find(query, {"_id": 0, "id": 1})
+    return {"ids": [doc["id"] async for doc in cursor]}
+
 @api_router.get("/leads")
 async def list_leads(
     request: Request,

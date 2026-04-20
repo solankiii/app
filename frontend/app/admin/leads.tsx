@@ -24,6 +24,7 @@ export default function AdminLeads() {
   const [salesUsers, setSalesUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [totalMatching, setTotalMatching] = useState(0);
 
   // Bulk assign
   const [selectMode, setSelectMode] = useState(false);
@@ -45,8 +46,18 @@ export default function AdminLeads() {
       if (cityFilter !== 'all') params.city = cityFilter;
       const res = await api.get('/leads', { params });
       setLeads(res.data.leads || []);
+      setTotalMatching(res.data.total || 0);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
+  };
+
+  const currentFilterParams = () => {
+    const params: any = {};
+    if (search) params.search = search;
+    if (statusFilter !== 'all') params.status = statusFilter;
+    if (industryFilter !== 'all') params.industry = industryFilter;
+    if (cityFilter !== 'all') params.city = cityFilter;
+    return params;
   };
 
   useFocusEffect(useCallback(() => { loadLeads(); }, [search, statusFilter, industryFilter, cityFilter]));
@@ -60,11 +71,18 @@ export default function AdminLeads() {
     });
   };
 
-  const selectAll = () => {
-    if (selected.size === leads.length) {
+  const selectAll = async () => {
+    if (selected.size >= totalMatching && totalMatching > 0) {
       setSelected(new Set());
-    } else {
-      setSelected(new Set(leads.map(l => l.id)));
+      return;
+    }
+    try {
+      const res = await api.get('/leads/ids', { params: currentFilterParams() });
+      setSelected(new Set(res.data.ids || []));
+    } catch (e: any) {
+      const msg = e.response?.data?.detail || 'Failed to select all';
+      if (Platform.OS === 'web') window.alert(`Error: ${msg}`);
+      else Alert.alert('Error', msg);
     }
   };
 
@@ -296,7 +314,9 @@ export default function AdminLeads() {
             <TouchableOpacity onPress={selectAll} style={styles.selectAllBtn}>
               <Ionicons name="checkmark-done" size={16} color={Colors.primary} />
               <Text style={styles.selectAllText}>
-                {selected.size === leads.length ? 'Deselect All' : 'Select All'}
+                {selected.size >= totalMatching && totalMatching > 0
+                  ? 'Deselect All'
+                  : `Select All${totalMatching ? ` (${totalMatching})` : ''}`}
               </Text>
             </TouchableOpacity>
             <Text style={styles.bulkCount}>{selected.size} selected</Text>
