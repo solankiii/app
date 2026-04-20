@@ -178,8 +178,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12, height: 44,
   },
   searchInput: { flex: 1, fontSize: 14, color: Colors.text },
-  filterRow: { maxHeight: 44, marginTop: 12 },
-  filterRow2: { maxHeight: 44, marginTop: 4 },
+  filterRow: { minHeight: 36, maxHeight: 44, marginTop: 12 },
+  filterRow2: { minHeight: 36, maxHeight: 44, marginTop: 4 },
   filterContent: { paddingHorizontal: 16, gap: 8 },
   filterChip: {
     paddingHorizontal: 14, paddingVertical: 6, borderRadius: 16,
