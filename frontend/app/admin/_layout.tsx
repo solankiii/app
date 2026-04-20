@@ -6,14 +6,15 @@ import { Colors } from '@/src/constants/colors';
 export default function AdminLayout() {
   return (
     <Tabs screenOptions={{
-      headerStyle: { backgroundColor: Colors.surface },
-      headerTintColor: Colors.text,
-      headerTitleStyle: { fontWeight: '600' },
+      headerShown: false,
+      tabBarPosition: 'top',
       tabBarStyle: {
         backgroundColor: Colors.surface,
-        borderTopColor: Colors.border,
-        height: 60,
-        paddingBottom: 6,
+        borderBottomColor: Colors.border,
+        borderBottomWidth: 1,
+        borderTopWidth: 0,
+        height: 56,
+        paddingTop: 4,
       },
       tabBarActiveTintColor: Colors.primary,
       tabBarInactiveTintColor: Colors.textMuted,

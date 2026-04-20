@@ -38,7 +38,8 @@ export default function AdminDashboard() {
             <Text style={styles.role}>{user?.full_name}</Text>
           </View>
           <TouchableOpacity testID="admin-logout-btn" onPress={logout} style={styles.logoutBtn}>
-            <Ionicons name="log-out-outline" size={22} color={Colors.textMuted} />
+            <Ionicons name="log-out-outline" size={20} color={Colors.textMuted} />
+            <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
         </View>
 
@@ -100,7 +101,8 @@ const styles = StyleSheet.create({
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 },
   greeting: { fontSize: 22, fontWeight: '700', color: Colors.text },
   role: { fontSize: 13, color: Colors.textMuted, marginTop: 2 },
-  logoutBtn: { padding: 8 },
+  logoutBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8 },
+  logoutText: { fontSize: 13, fontWeight: '600', color: Colors.textMuted },
   metricsGrid: { flexDirection: 'row', gap: 12, marginBottom: 12 },
   sectionTitle: { fontSize: 16, fontWeight: '600', color: Colors.text, marginTop: 24, marginBottom: 12 },
   perfCard: {

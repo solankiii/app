@@ -349,6 +349,18 @@ async def update_user_role(user_id: str, req: UserRoleUpdate, request: Request):
     updated = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
     return updated
 
+@api_router.delete("/users/{user_id}")
+async def delete_user(user_id: str, request: Request):
+    admin = await require_admin(request)
+    if user_id == admin["id"]:
+        raise HTTPException(400, "Cannot delete yourself")
+    target = await db.users.find_one({"id": user_id})
+    if not target:
+        raise HTTPException(404, "User not found")
+    await db.leads.update_many({"assigned_to": user_id}, {"$set": {"assigned_to": None}})
+    await db.users.delete_one({"id": user_id})
+    return {"ok": True}
+
 
 # ─── Leads Routes ────────────────────────────────────────────────────
 @api_router.get("/leads/industries")

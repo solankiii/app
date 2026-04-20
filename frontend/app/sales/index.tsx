@@ -44,7 +44,8 @@ export default function SalesDashboard() {
             <Text style={styles.role}>Sales Dashboard</Text>
           </View>
           <TouchableOpacity testID="logout-btn" onPress={logout} style={styles.logoutBtn}>
-            <Ionicons name="log-out-outline" size={22} color={Colors.textMuted} />
+            <Ionicons name="log-out-outline" size={20} color={Colors.textMuted} />
+            <Text style={styles.logoutText}>Logout</Text>
           </TouchableOpacity>
         </View>
 
@@ -112,7 +113,8 @@ const styles = StyleSheet.create({
   },
   greeting: { fontSize: 22, fontWeight: '700', color: Colors.text },
   role: { fontSize: 13, color: Colors.textMuted, marginTop: 2 },
-  logoutBtn: { padding: 8 },
+  logoutBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, padding: 8 },
+  logoutText: { fontSize: 13, fontWeight: '600', color: Colors.textMuted },
   metricsGrid: {
     flexDirection: 'row', gap: 12, marginBottom: 12,
   },

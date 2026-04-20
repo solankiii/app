@@ -46,6 +46,25 @@ export default function UsersScreen() {
   useFocusEffect(useCallback(() => { loadUsers(); }, []));
   const onRefresh = async () => { setRefreshing(true); await loadUsers(); setRefreshing(false); };
 
+  const deleteUser = (userId: string, userName: string) => {
+    confirmAction(
+      'Delete User',
+      `Delete ${userName}? Their leads will become Unassigned.`,
+      async () => {
+        setUpdating(userId);
+        try {
+          await api.delete(`/users/${userId}`);
+          await loadUsers();
+          showMessage('Success', `${userName} deleted`);
+        } catch (e: any) {
+          showMessage('Error', e.response?.data?.detail || 'Failed to delete user');
+        } finally {
+          setUpdating(null);
+        }
+      }
+    );
+  };
+
   const toggleRole = async (userId: string, currentRole: string) => {
     const newRole = currentRole === 'admin' ? 'sales' : 'admin';
     confirmAction(
@@ -144,6 +163,13 @@ export default function UsersScreen() {
                 ) : (
                   <Ionicons name="swap-horizontal" size={18} color={Colors.primary} />
                 )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.toggleBtn}
+                onPress={() => deleteUser(item.id, item.full_name)}
+                disabled={updating === item.id}
+              >
+                <Ionicons name="trash-outline" size={16} color={Colors.danger} />
               </TouchableOpacity>
             </View>
           )}

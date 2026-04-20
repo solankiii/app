@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
-  KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView,
+  KeyboardAvoidingView, Platform, ActivityIndicator, ScrollView, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -37,7 +37,14 @@ export default function SignupScreen() {
     setError('');
     setLoading(true);
     try {
-      await signup(fullName.trim(), email.trim(), password, phone.trim() || undefined);
+      const userData = await signup(fullName.trim(), email.trim(), password, phone.trim() || undefined);
+      const target = userData.role === 'admin' ? '/admin' : '/sales';
+      if (Platform.OS === 'web') {
+        window.alert('Account created successfully. Welcome!');
+      } else {
+        Alert.alert('Welcome', 'Account created successfully');
+      }
+      router.replace(target);
     } catch (e: any) {
       const detail = e.response?.data?.detail;
       setError(typeof detail === 'string' ? detail : 'Registration failed. Try again.');
