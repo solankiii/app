@@ -19,7 +19,7 @@ function RootNavigator() {
 
     if (!user && inApp) {
       router.replace('/');
-    } else if (user && !inApp && segments[0] !== 'lead' && segments[0] !== 'add-lead' && segments[0] !== 'post-call' && segments[0] !== 'signup' && segments[0] !== 'forgot-password') {
+    } else if (user && !inApp && segments[0] !== 'lead' && segments[0] !== 'add-lead' && segments[0] !== 'post-call' && segments[0] !== 'signup' && segments[0] !== 'forgot-password' && segments[0] !== 'salesperson') {
       if (user.role === 'admin') {
         router.replace('/admin');
       } else {
@@ -68,6 +68,11 @@ function RootNavigator() {
         }} />
         <Stack.Screen name="post-call/[id]" options={{
           headerShown: true, title: 'Post Call Form', presentation: 'modal',
+          headerStyle: { backgroundColor: Colors.surface },
+          headerTintColor: Colors.text,
+        }} />
+        <Stack.Screen name="salesperson/[id]" options={{
+          headerShown: true, title: 'Salesperson Detail',
           headerStyle: { backgroundColor: Colors.surface },
           headerTintColor: Colors.text,
         }} />

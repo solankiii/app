@@ -40,7 +40,12 @@ export default function AdminCalls() {
     >
       <View style={styles.cardTop}>
         <View style={styles.cardInfo}>
-          <Text style={styles.leadName}>{item.lead_name}</Text>
+          <Text style={styles.leadName} numberOfLines={1}>
+            {item.lead_company || item.lead_name || item.dialed_number}
+          </Text>
+          {item.lead_company && item.lead_name ? (
+            <Text style={styles.contactName} numberOfLines={1}>{item.lead_name}</Text>
+          ) : null}
           <Text style={styles.phone}>{item.dialed_number}</Text>
         </View>
         {item.outcome ? <StatusBadge status={item.outcome} small /> : (
@@ -85,7 +90,8 @@ const styles = StyleSheet.create({
   },
   cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' },
   cardInfo: { flex: 1, marginRight: 8 },
-  leadName: { fontSize: 15, fontWeight: '600', color: Colors.text },
+  leadName: { fontSize: 15, fontWeight: '700', color: Colors.text },
+  contactName: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
   phone: { fontSize: 13, color: Colors.textMuted, marginTop: 2 },
   pending: { fontSize: 12, color: Colors.warning, fontWeight: '500' },
   cardMeta: { flexDirection: 'row', gap: 16, marginTop: 8 },

@@ -329,12 +329,12 @@ async def verify_reset_otp(req: VerifyOtpRequest):
 # ─── Users Routes ────────────────────────────────────────────────────
 @api_router.get("/users")
 async def list_users(request: Request):
-    await get_current_user(request)
+    await require_admin(request)
     return await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(100)
 
 @api_router.get("/users/sales")
 async def list_sales_users(request: Request):
-    await get_current_user(request)
+    await require_admin(request)
     return await db.users.find({"role": "sales"}, {"_id": 0, "password_hash": 0}).to_list(100)
 
 @api_router.patch("/users/{user_id}/role")
@@ -1102,7 +1102,10 @@ async def list_call_sessions(
     user_ids = list({s.get("user_id") for s in sessions if s.get("user_id")})
     leads_map = {}
     if lead_ids:
-        leads_list = await db.leads.find({"id": {"$in": lead_ids}}, {"_id": 0, "id": 1, "full_name": 1, "phone_number": 1}).to_list(100)
+        leads_list = await db.leads.find(
+            {"id": {"$in": lead_ids}},
+            {"_id": 0, "id": 1, "full_name": 1, "phone_number": 1, "company_name": 1}
+        ).to_list(100)
         leads_map = {l["id"]: l for l in leads_list}
     users_map = {}
     if user_ids:
@@ -1110,7 +1113,8 @@ async def list_call_sessions(
         users_map = {u["id"]: u["full_name"] for u in users_list}
     for s in sessions:
         lead = leads_map.get(s.get("lead_id"), {})
-        s["lead_name"] = lead.get("full_name", "Unknown")
+        s["lead_name"] = lead.get("full_name", "")
+        s["lead_company"] = lead.get("company_name", "")
         s["lead_phone"] = lead.get("phone_number", "")
         s["user_name"] = users_map.get(s.get("user_id"), "Unknown")
     total = await db.call_sessions.count_documents(query)
@@ -1415,9 +1419,28 @@ async def admin_dashboard(request: Request):
     now = datetime.now(timezone.utc)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
     today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+    # Build last 3 day windows (oldest -> today)
+    day_windows = []
+    for offset in (2, 1, 0):
+        day = (now - timedelta(days=offset)).replace(hour=0, minute=0, second=0, microsecond=0)
+        day_windows.append({
+            "date": day.date().isoformat(),
+            "start": day.isoformat(),
+            "end": (day + timedelta(days=1)).isoformat(),
+        })
     sales_users = await db.users.find({"role": "sales"}, {"_id": 0, "password_hash": 0}).to_list(50)
     performance = []
     for su in sales_users:
+        last_3_days = []
+        for d in day_windows:
+            calls = await db.call_sessions.count_documents({
+                "user_id": su["id"], "created_at": {"$gte": d["start"], "$lt": d["end"]}
+            })
+            connected = await db.call_sessions.count_documents({
+                "user_id": su["id"], "outcome": "connected",
+                "created_at": {"$gte": d["start"], "$lt": d["end"]}
+            })
+            last_3_days.append({"date": d["date"], "calls": calls, "connected": connected})
         performance.append({
             "user_id": su["id"], "full_name": su["full_name"],
             "calls_today": await db.call_sessions.count_documents({
@@ -1426,7 +1449,8 @@ async def admin_dashboard(request: Request):
             "total_leads": await db.leads.count_documents({"assigned_to": su["id"]}),
             "connected_calls": await db.call_sessions.count_documents({
                 "user_id": su["id"], "outcome": "connected"
-            })
+            }),
+            "last_3_days": last_3_days,
         })
     return {
         "total_calls_today": await db.call_sessions.count_documents({
@@ -1439,6 +1463,75 @@ async def admin_dashboard(request: Request):
         "pending_follow_ups": await db.follow_ups.count_documents({"status": "pending"}),
         "uploaded_recordings": await db.call_recordings.count_documents({"upload_status": "uploaded"}),
         "salesperson_performance": performance
+    }
+
+
+@api_router.get("/dashboard/salesperson/{user_id}")
+async def salesperson_detail(user_id: str, request: Request):
+    await require_admin(request)
+    user = await db.users.find_one({"id": user_id}, {"_id": 0, "password_hash": 0})
+    if not user:
+        raise HTTPException(404, "User not found")
+    now = datetime.now(timezone.utc)
+    # Last 7 days oldest -> today
+    day_windows = []
+    for offset in range(6, -1, -1):
+        day = (now - timedelta(days=offset)).replace(hour=0, minute=0, second=0, microsecond=0)
+        day_windows.append({
+            "date": day.date().isoformat(),
+            "start": day.isoformat(),
+            "end": (day + timedelta(days=1)).isoformat(),
+        })
+    last_7_days = []
+    for d in day_windows:
+        calls = await db.call_sessions.count_documents({
+            "user_id": user_id, "created_at": {"$gte": d["start"], "$lt": d["end"]}
+        })
+        connected = await db.call_sessions.count_documents({
+            "user_id": user_id, "outcome": "connected",
+            "created_at": {"$gte": d["start"], "$lt": d["end"]}
+        })
+        last_7_days.append({"date": d["date"], "calls": calls, "connected": connected})
+    week_start = day_windows[0]["start"]
+    week_end = day_windows[-1]["end"]
+    outcomes = ["connected", "no_answer", "busy", "declined", "wrong_number", "voicemail"]
+    outcome_breakdown_7d = {}
+    for o in outcomes:
+        outcome_breakdown_7d[o] = await db.call_sessions.count_documents({
+            "user_id": user_id, "outcome": o,
+            "created_at": {"$gte": week_start, "$lt": week_end}
+        })
+    statuses = ["new", "contacted", "interested", "follow_up", "won", "lost"]
+    lead_status_breakdown = {}
+    for s in statuses:
+        lead_status_breakdown[s] = await db.leads.count_documents({
+            "assigned_to": user_id, "status": s
+        })
+    total_leads = await db.leads.count_documents({"assigned_to": user_id})
+    # Recent calls — 20 most recent, enriched
+    sessions = await db.call_sessions.find(
+        {"user_id": user_id}, {"_id": 0}
+    ).sort("created_at", -1).limit(20).to_list(20)
+    lead_ids = list({s.get("lead_id") for s in sessions if s.get("lead_id")})
+    leads_map = {}
+    if lead_ids:
+        leads_list = await db.leads.find(
+            {"id": {"$in": lead_ids}},
+            {"_id": 0, "id": 1, "full_name": 1, "phone_number": 1, "company_name": 1}
+        ).to_list(100)
+        leads_map = {l["id"]: l for l in leads_list}
+    for s in sessions:
+        lead = leads_map.get(s.get("lead_id"), {})
+        s["lead_name"] = lead.get("full_name", "")
+        s["lead_company"] = lead.get("company_name", "")
+        s["lead_phone"] = lead.get("phone_number", "")
+    return {
+        "user": user,
+        "total_leads": total_leads,
+        "last_7_days": last_7_days,
+        "outcome_breakdown_7d": outcome_breakdown_7d,
+        "lead_status_breakdown": lead_status_breakdown,
+        "recent_calls": sessions,
     }
 
 

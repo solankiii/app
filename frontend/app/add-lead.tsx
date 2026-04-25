@@ -23,8 +23,10 @@ export default function AddLead() {
   });
 
   React.useEffect(() => {
-    api.get('/users/sales').then(res => setSalesUsers(res.data || [])).catch(() => {});
-  }, []);
+    if (user?.role === 'admin') {
+      api.get('/users/sales').then(res => setSalesUsers(res.data || [])).catch(() => {});
+    }
+  }, [user?.role]);
 
   const handleSave = async () => {
     if (!form.full_name.trim() || !form.phone_number.trim()) {
@@ -101,21 +103,23 @@ export default function AddLead() {
           <TextInput testID="add-lead-city" style={styles.input} value={form.city}
             onChangeText={v => update('city', v)} placeholder="Optional" />
         </View>
-        <View style={styles.field}>
-          <Text style={styles.label}>Assign To</Text>
-          <View style={styles.chipRow}>
-            {salesUsers.map(u => (
-              <TouchableOpacity key={u.id}
-                style={[styles.chip, form.assigned_to === u.id && styles.chipActive]}
-                onPress={() => update('assigned_to', u.id)}
-              >
-                <Text style={[styles.chipText, form.assigned_to === u.id && styles.chipTextActive]}>
-                  {u.full_name}
-                </Text>
-              </TouchableOpacity>
-            ))}
+        {user?.role === 'admin' && (
+          <View style={styles.field}>
+            <Text style={styles.label}>Assign To</Text>
+            <View style={styles.chipRow}>
+              {salesUsers.map(u => (
+                <TouchableOpacity key={u.id}
+                  style={[styles.chip, form.assigned_to === u.id && styles.chipActive]}
+                  onPress={() => update('assigned_to', u.id)}
+                >
+                  <Text style={[styles.chipText, form.assigned_to === u.id && styles.chipTextActive]}>
+                    {u.full_name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
-        </View>
+        )}
         <View style={styles.field}>
           <Text style={styles.label}>Initial Note</Text>
           <TextInput testID="add-lead-notes" style={[styles.input, styles.textArea]}

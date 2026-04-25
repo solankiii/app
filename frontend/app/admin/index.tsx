@@ -2,14 +2,58 @@ import React, { useState, useCallback } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, RefreshControl } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useAuth } from '@/src/context/AuthContext';
 import { Colors } from '@/src/constants/colors';
 import MetricCard from '@/src/components/MetricCard';
 import api from '@/src/api/client';
 
+function DayBars({ series }: { series: { date: string; calls: number; connected: number }[] }) {
+  const max = Math.max(1, ...series.map(d => d.calls));
+  const fmt = (iso: string) => {
+    const d = new Date(iso);
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+  };
+  return (
+    <View style={barStyles.wrap}>
+      <View style={barStyles.legend}>
+        <View style={barStyles.legendItem}><View style={[barStyles.legendDot, { backgroundColor: Colors.primary }]} /><Text style={barStyles.legendText}>Calls</Text></View>
+        <View style={barStyles.legendItem}><View style={[barStyles.legendDot, { backgroundColor: Colors.success }]} /><Text style={barStyles.legendText}>Connected</Text></View>
+      </View>
+      <View style={barStyles.row}>
+        {series.map(d => (
+          <View key={d.date} style={barStyles.col}>
+            <View style={barStyles.barStack}>
+              <View style={[barStyles.bar, { height: (d.calls / max) * 60, backgroundColor: Colors.primary, opacity: 0.25 }]} />
+              <View style={[barStyles.barOverlay, { height: (d.connected / max) * 60, backgroundColor: Colors.success }]} />
+            </View>
+            <Text style={barStyles.label}>{fmt(d.date)}</Text>
+            <Text style={barStyles.count}>{d.calls}/{d.connected}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const barStyles = StyleSheet.create({
+  wrap: { marginTop: 12, paddingTop: 8, borderTopWidth: 1, borderTopColor: Colors.border },
+  legend: { flexDirection: 'row', gap: 12, marginBottom: 6 },
+  legendItem: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  legendDot: { width: 8, height: 8, borderRadius: 4 },
+  legendText: { fontSize: 10, color: Colors.textMuted },
+  row: { flexDirection: 'row', justifyContent: 'space-around', alignItems: 'flex-end' },
+  col: { alignItems: 'center', flex: 1 },
+  barStack: { width: 24, height: 60, justifyContent: 'flex-end' },
+  bar: { width: 24, borderRadius: 3 },
+  barOverlay: { width: 24, borderRadius: 3, position: 'absolute', bottom: 0 },
+  label: { fontSize: 10, color: Colors.textMuted, marginTop: 4 },
+  count: { fontSize: 10, color: Colors.text, fontWeight: '600' },
+});
+
 export default function AdminDashboard() {
   const { user, logout } = useAuth();
+  const router = useRouter();
   const [data, setData] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -63,12 +107,18 @@ export default function AdminDashboard() {
 
         <Text style={styles.sectionTitle}>Salesperson Performance</Text>
         {(data?.salesperson_performance || []).map((sp: any) => (
-          <View key={sp.user_id} style={styles.perfCard}>
+          <TouchableOpacity
+            key={sp.user_id}
+            style={styles.perfCard}
+            activeOpacity={0.7}
+            onPress={() => router.push(`/salesperson/${sp.user_id}`)}
+          >
             <View style={styles.perfHeader}>
               <View style={styles.avatar}>
                 <Text style={styles.avatarText}>{sp.full_name?.charAt(0)}</Text>
               </View>
               <Text style={styles.perfName}>{sp.full_name}</Text>
+              <Ionicons name="chevron-forward" size={18} color={Colors.textMuted} style={{ marginLeft: 'auto' }} />
             </View>
             <View style={styles.perfStats}>
               <View style={styles.perfStat}>
@@ -84,7 +134,10 @@ export default function AdminDashboard() {
                 <Text style={styles.perfStatLabel}>Connected</Text>
               </View>
             </View>
-          </View>
+            {sp.last_3_days && sp.last_3_days.length > 0 && (
+              <DayBars series={sp.last_3_days} />
+            )}
+          </TouchableOpacity>
         ))}
         {(!data?.salesperson_performance || data.salesperson_performance.length === 0) && (
           <Text style={styles.emptyText}>No salesperson data available</Text>
