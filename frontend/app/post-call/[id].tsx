@@ -38,11 +38,15 @@ export default function PostCallForm() {
   const { id: sessionId } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<Record<string, string>>({
     outcome: '',
     duration_seconds: '',
     call_notes: '',
     lead_status: 'contacted',
+    spoc_name: '',
+    spoc_email: '',
+    spoc_whatsapp: '',
+    spoc_mobile: '',
   });
   const [fuDate, setFuDate] = useState('');
   const [fuTime, setFuTime] = useState('10:00');
@@ -67,6 +71,10 @@ export default function PostCallForm() {
       if (fuDate) {
         payload.next_follow_up_at = new Date(`${fuDate}T${fuTime || '10:00'}`).toISOString();
       }
+      (['spoc_name', 'spoc_email', 'spoc_whatsapp', 'spoc_mobile'] as const).forEach((k) => {
+        const v = form[k]?.trim();
+        if (v) payload[k] = v;
+      });
       await api.put(`/call-sessions/${sessionId}`, payload);
       showMsg('Success', 'Call session updated');
       router.back();
@@ -122,6 +130,40 @@ export default function PostCallForm() {
             placeholder="What was discussed..."
             multiline
             numberOfLines={4}
+          />
+        </View>
+
+        <View style={styles.field}>
+          <Text style={styles.label}>SPOC Contact (optional)</Text>
+          <TextInput
+            style={styles.input}
+            value={form.spoc_name}
+            onChangeText={v => update('spoc_name', v)}
+            placeholder="Name"
+            autoCapitalize="words"
+          />
+          <TextInput
+            style={[styles.input, { marginTop: 8 }]}
+            value={form.spoc_email}
+            onChangeText={v => update('spoc_email', v)}
+            placeholder="Email"
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <TextInput
+            style={[styles.input, { marginTop: 8 }]}
+            value={form.spoc_whatsapp}
+            onChangeText={v => update('spoc_whatsapp', v)}
+            placeholder="WhatsApp number (+91...)"
+            keyboardType="phone-pad"
+          />
+          <TextInput
+            style={[styles.input, { marginTop: 8 }]}
+            value={form.spoc_mobile}
+            onChangeText={v => update('spoc_mobile', v)}
+            placeholder="Mobile number (+91...)"
+            keyboardType="phone-pad"
           />
         </View>
 

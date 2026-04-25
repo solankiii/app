@@ -151,6 +151,10 @@ class LeadCreate(BaseModel):
     city: Optional[str] = None
     assigned_to: Optional[str] = None
     notes: Optional[str] = None
+    spoc_name: Optional[str] = None
+    spoc_email: Optional[str] = None
+    spoc_whatsapp: Optional[str] = None
+    spoc_mobile: Optional[str] = None
 
 class LeadUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -163,6 +167,10 @@ class LeadUpdate(BaseModel):
     assigned_to: Optional[str] = None
     notes: Optional[str] = None
     status: Optional[str] = None
+    spoc_name: Optional[str] = None
+    spoc_email: Optional[str] = None
+    spoc_whatsapp: Optional[str] = None
+    spoc_mobile: Optional[str] = None
 
 class UserRoleUpdate(BaseModel):
     role: str  # "admin" or "sales"
@@ -193,6 +201,10 @@ class CallSessionUpdate(BaseModel):
     call_notes: Optional[str] = None
     next_follow_up_at: Optional[str] = None
     lead_status: Optional[str] = None
+    spoc_name: Optional[str] = None
+    spoc_email: Optional[str] = None
+    spoc_whatsapp: Optional[str] = None
+    spoc_mobile: Optional[str] = None
 
 class FollowUpCreate(BaseModel):
     lead_id: str
@@ -374,6 +386,39 @@ async def list_cities(request: Request):
     await get_current_user(request)
     cities = await db.leads.distinct("city")
     return sorted([c for c in cities if c], key=lambda s: s.lower())
+
+@api_router.get("/contacts")
+async def list_contacts(
+    request: Request,
+    search: Optional[str] = None,
+    limit: int = 200,
+):
+    user = await get_current_user(request)
+    base: dict = {
+        "$or": [
+            {"phone_number": {"$exists": True, "$nin": ["", None]}},
+            {"spoc_email": {"$exists": True, "$nin": ["", None]}},
+            {"spoc_whatsapp": {"$exists": True, "$nin": ["", None]}},
+            {"spoc_mobile": {"$exists": True, "$nin": ["", None]}},
+        ]
+    }
+    query: dict = dict(base)
+    if user["role"] == "sales":
+        query["assigned_to"] = user["id"]
+    if search:
+        query["$and"] = [{"$or": [
+            {"company_name": {"$regex": search, "$options": "i"}},
+            {"full_name": {"$regex": search, "$options": "i"}},
+            {"spoc_name": {"$regex": search, "$options": "i"}},
+            {"phone_number": {"$regex": search, "$options": "i"}},
+            {"spoc_email": {"$regex": search, "$options": "i"}},
+        ]}]
+    contacts = await db.leads.find(query, {
+        "_id": 0, "id": 1, "full_name": 1, "phone_number": 1, "company_name": 1,
+        "city": 1, "industry": 1, "status": 1, "assigned_to": 1,
+        "spoc_name": 1, "spoc_email": 1, "spoc_whatsapp": 1, "spoc_mobile": 1,
+    }).sort("updated_at", -1).limit(limit).to_list(limit)
+    return {"contacts": contacts, "total": len(contacts)}
 
 @api_router.get("/leads/ids")
 async def list_lead_ids(
@@ -1142,6 +1187,15 @@ async def update_call_session(session_id: str, req: CallSessionUpdate, request: 
             {"id": session["lead_id"]},
             {"$set": {"status": req.lead_status, "updated_at": now}}
         )
+    spoc_update = {k: v for k, v in {
+        "spoc_name": req.spoc_name,
+        "spoc_email": req.spoc_email,
+        "spoc_whatsapp": req.spoc_whatsapp,
+        "spoc_mobile": req.spoc_mobile,
+    }.items() if v is not None and v != ""}
+    if spoc_update:
+        spoc_update["updated_at"] = now
+        await db.leads.update_one({"id": session["lead_id"]}, {"$set": spoc_update})
     if req.next_follow_up_at:
         await db.follow_ups.insert_one({
             "id": str(uuid.uuid4()), "lead_id": session["lead_id"],

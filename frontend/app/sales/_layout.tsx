@@ -28,6 +28,10 @@ export default function SalesLayout() {
         title: 'Leads',
         tabBarIcon: ({ color, size }) => <Ionicons name="people-outline" size={size} color={color} />,
       }} />
+      <Tabs.Screen name="contacts" options={{
+        title: 'Contacts',
+        tabBarIcon: ({ color, size }) => <Ionicons name="people-circle-outline" size={size} color={color} />,
+      }} />
       <Tabs.Screen name="follow-ups" options={{
         title: 'Follow-ups',
         tabBarIcon: ({ color, size }) => <Ionicons name="calendar-outline" size={size} color={color} />,

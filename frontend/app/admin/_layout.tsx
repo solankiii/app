@@ -44,6 +44,10 @@ export default function AdminLayout() {
         title: 'BulkLead',
         tabBarIcon: ({ color, size }) => <Ionicons name="sparkles-outline" size={size} color={color} />,
       }} />
+      <Tabs.Screen name="contacts" options={{
+        title: 'Contacts',
+        tabBarIcon: ({ color, size }) => <Ionicons name="people-circle-outline" size={size} color={color} />,
+      }} />
       <Tabs.Screen name="share" options={{
         title: 'QR Share',
         tabBarIcon: ({ color, size }) => <Ionicons name="qr-code-outline" size={size} color={color} />,
