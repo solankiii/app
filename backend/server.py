@@ -1535,6 +1535,159 @@ async def salesperson_detail(user_id: str, request: Request):
     }
 
 
+# ─── Demo Data Seeder (staging only) ─────────────────────────────────
+@api_router.post("/admin/seed-demo")
+async def seed_demo_data(request: Request):
+    """One-shot demo data populator. Refuses to run unless DB_NAME ends with '_staging'
+    so it can never run on production. Idempotent-ish: safe to call multiple times,
+    but each call appends fresh leads + calls + follow-ups (does not delete existing)."""
+    await require_admin(request)
+    db_name = os.environ.get("DB_NAME", "sales_crm")
+    if not db_name.endswith("_staging"):
+        raise HTTPException(403, f"Refusing to seed demo data on '{db_name}' (must end with _staging)")
+
+    import random as _r
+    now = datetime.now(timezone.utc)
+    iso_now = now.isoformat()
+
+    # ── Sales reps ───
+    demo_reps = [
+        ("Arya Pardeshi", "arya@demo.com", "+919876500001"),
+        ("Smriti Iyer", "smriti@demo.com", "+919876500002"),
+        ("Rohan Mehta", "rohan@demo.com", "+919876500003"),
+        ("Kavya Nair", "kavya@demo.com", "+919876500004"),
+    ]
+    rep_ids = []
+    for full_name, email, phone in demo_reps:
+        existing = await db.users.find_one({"email": email})
+        if existing:
+            rep_ids.append(existing["id"])
+            continue
+        uid = str(uuid.uuid4())
+        await db.users.insert_one({
+            "id": uid, "full_name": full_name, "email": email, "phone": phone,
+            "role": "sales", "is_active": True,
+            "password_hash": hash_password("demo123"),
+            "created_at": iso_now, "updated_at": iso_now,
+        })
+        rep_ids.append(uid)
+
+    # ── Leads ───
+    cities = ["Pune", "Mumbai", "Delhi", "Bangalore", "Ahmedabad", "Hyderabad"]
+    industries = ["Technology", "Finance", "Healthcare", "Logistics", "E-commerce", "Construction", "Education"]
+    sources = ["website", "referral", "cold_call", "trade_show", "social_media", "Google Maps"]
+    statuses = ["new", "contacted", "interested", "follow_up", "won", "lost"]
+    company_prefixes = ["Acme", "Globex", "Initech", "Umbrella", "Stark", "Wayne", "Hooli", "Pied Piper", "Sterling", "Cyberdyne", "Wonka", "Aperture", "Tyrell", "Soylent", "Massive", "Vandelay"]
+    company_suffixes = ["Industries", "Solutions", "Systems", "Labs", "Corp", "Holdings", "Logistics", "Partners", "Pvt Ltd", "Ventures"]
+    contact_first = ["Aarav", "Vihaan", "Aditya", "Reyansh", "Ishaan", "Ananya", "Diya", "Saanvi", "Pari", "Riya", "Karan", "Neha", "Sahil", "Tanya", "Aman"]
+    contact_last = ["Sharma", "Patel", "Kumar", "Singh", "Verma", "Gupta", "Reddy", "Nair", "Mehta", "Joshi"]
+
+    leads_to_insert = []
+    for i in range(80):
+        lid = str(uuid.uuid4())
+        company = f"{_r.choice(company_prefixes)} {_r.choice(company_suffixes)}"
+        # Backdate created_at across the past 14 days
+        days_ago = _r.randint(0, 13)
+        created_at = (now - timedelta(days=days_ago, hours=_r.randint(0, 23))).isoformat()
+        assigned_to = _r.choice(rep_ids + [None])
+        leads_to_insert.append({
+            "id": lid,
+            "full_name": f"{_r.choice(contact_first)} {_r.choice(contact_last)}",
+            "phone_number": f"+9198{_r.randint(10000000, 99999999)}",
+            "alternate_phone": None,
+            "company_name": company,
+            "source": _r.choice(sources),
+            "industry": _r.choice(industries),
+            "city": _r.choice(cities),
+            "status": _r.choice(statuses),
+            "assigned_to": assigned_to,
+            "notes": None,
+            "rating": round(_r.uniform(3.0, 4.9), 1),
+            "total_reviews": _r.randint(5, 800),
+            "google_maps_link": None,
+            "address": None,
+            "website": None,
+            "business_status": "OPERATIONAL",
+            "currently_open": _r.choice([True, False, None]),
+            "created_by": None,
+            "created_at": created_at,
+            "updated_at": created_at,
+        })
+    await db.leads.insert_many(leads_to_insert)
+    lead_id_pool = [l["id"] for l in leads_to_insert if l["assigned_to"]]
+
+    # ── Call sessions across last 7 days ───
+    outcomes_pool = ["connected", "no_answer", "busy", "declined", "wrong_number", "voicemail"]
+    outcome_weights = [50, 20, 8, 6, 6, 10]  # connected most common
+    sessions_to_insert = []
+    for day_offset in range(7):
+        for rep_id in rep_ids:
+            # Each rep makes 3-15 calls per day, varying by rep
+            rep_index = rep_ids.index(rep_id)
+            base = [12, 9, 6, 4][rep_index] if rep_index < 4 else 5
+            calls_today = max(0, base + _r.randint(-3, 4))
+            for _ in range(calls_today):
+                if not lead_id_pool:
+                    break
+                lead_id = _r.choice(lead_id_pool)
+                hour = _r.randint(9, 19)
+                minute = _r.randint(0, 59)
+                started = (now - timedelta(days=day_offset)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+                duration = _r.choice([0, 0, 12, 23, 45, 67, 92, 134, 187, 234])
+                ended = started + timedelta(seconds=duration)
+                outcome = _r.choices(outcomes_pool, weights=outcome_weights)[0]
+                sessions_to_insert.append({
+                    "id": str(uuid.uuid4()),
+                    "lead_id": lead_id,
+                    "user_id": rep_id,
+                    "dialed_number": f"+9198{_r.randint(10000000, 99999999)}",
+                    "call_started_at": started.isoformat(),
+                    "call_ended_at": ended.isoformat() if duration > 0 else None,
+                    "duration_seconds": duration,
+                    "outcome": outcome,
+                    "notes": None,
+                    "recording_status": _r.choice(["pending", "uploaded", "uploaded", "uploaded"]),
+                    "created_at": started.isoformat(),
+                    "updated_at": ended.isoformat(),
+                })
+    if sessions_to_insert:
+        await db.call_sessions.insert_many(sessions_to_insert)
+
+    # ── Follow-ups ───
+    follow_ups_to_insert = []
+    for _ in range(25):
+        if not lead_id_pool:
+            break
+        lead_id = _r.choice(lead_id_pool)
+        rep_id = _r.choice(rep_ids)
+        days_offset = _r.randint(-3, 5)
+        when = (now + timedelta(days=days_offset)).replace(hour=_r.randint(10, 18), minute=0, second=0, microsecond=0)
+        follow_ups_to_insert.append({
+            "id": str(uuid.uuid4()),
+            "lead_id": lead_id,
+            "assigned_to": rep_id,
+            "follow_up_at": when.isoformat(),
+            "status": "pending" if days_offset >= 0 else _r.choice(["pending", "completed"]),
+            "notes": _r.choice(["Confirm pricing", "Send proposal", "Schedule demo", "Decision maker call", "Contract review"]),
+            "created_at": iso_now,
+            "updated_at": iso_now,
+        })
+    if follow_ups_to_insert:
+        await db.follow_ups.insert_many(follow_ups_to_insert)
+
+    return {
+        "ok": True,
+        "db": db_name,
+        "inserted": {
+            "sales_reps": len(rep_ids),
+            "leads": len(leads_to_insert),
+            "call_sessions": len(sessions_to_insert),
+            "follow_ups": len(follow_ups_to_insert),
+        },
+        "demo_credentials": "All demo reps log in with password: demo123",
+    }
+
+
 # ─── Startup & Seeding ──────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
