@@ -393,16 +393,18 @@ async def list_contacts(
     search: Optional[str] = None,
     limit: int = 200,
 ):
+    """List leads whose SPOC contact info was captured via the Post-Call form.
+    Only leads with at least one of spoc_email / spoc_whatsapp / spoc_mobile
+    populated appear here — raw lead phone numbers do NOT count."""
     user = await get_current_user(request)
-    base: dict = {
+    spoc_filter = {
         "$or": [
-            {"phone_number": {"$exists": True, "$nin": ["", None]}},
             {"spoc_email": {"$exists": True, "$nin": ["", None]}},
             {"spoc_whatsapp": {"$exists": True, "$nin": ["", None]}},
             {"spoc_mobile": {"$exists": True, "$nin": ["", None]}},
         ]
     }
-    query: dict = dict(base)
+    query: dict = dict(spoc_filter)
     if user["role"] == "sales":
         query["assigned_to"] = user["id"]
     if search:
@@ -410,8 +412,9 @@ async def list_contacts(
             {"company_name": {"$regex": search, "$options": "i"}},
             {"full_name": {"$regex": search, "$options": "i"}},
             {"spoc_name": {"$regex": search, "$options": "i"}},
-            {"phone_number": {"$regex": search, "$options": "i"}},
             {"spoc_email": {"$regex": search, "$options": "i"}},
+            {"spoc_whatsapp": {"$regex": search, "$options": "i"}},
+            {"spoc_mobile": {"$regex": search, "$options": "i"}},
         ]}]
     contacts = await db.leads.find(query, {
         "_id": 0, "id": 1, "full_name": 1, "phone_number": 1, "company_name": 1,

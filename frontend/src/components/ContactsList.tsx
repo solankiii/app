@@ -42,8 +42,8 @@ export default function ContactsList() {
   const onRefresh = async () => { setRefreshing(true); await load(); setRefreshing(false); };
 
   const renderItem = ({ item }: { item: any }) => {
-    const callTarget = item.spoc_mobile || item.phone_number;
-    const waTarget = item.spoc_whatsapp || item.spoc_mobile || item.phone_number;
+    const callTarget = item.spoc_mobile;
+    const waTarget = item.spoc_whatsapp || item.spoc_mobile;
     const emailTarget = item.spoc_email;
     const title = item.company_name || item.full_name || '(no name)';
     const subtitle = item.spoc_name
@@ -64,7 +64,10 @@ export default function ContactsList() {
             <Text style={styles.name} numberOfLines={1}>{title}</Text>
             {subtitle ? <Text style={styles.sub} numberOfLines={1}>{subtitle}</Text> : null}
             <View style={styles.detailRow}>
-              {callTarget ? <Text style={styles.detail} numberOfLines={1}>{callTarget}</Text> : null}
+              {item.spoc_mobile ? <Text style={styles.detail} numberOfLines={1}>{item.spoc_mobile}</Text> : null}
+              {item.spoc_whatsapp && item.spoc_whatsapp !== item.spoc_mobile ? (
+                <Text style={styles.detail} numberOfLines={1}>WA: {item.spoc_whatsapp}</Text>
+              ) : null}
               {emailTarget ? <Text style={styles.detail} numberOfLines={1}>{emailTarget}</Text> : null}
             </View>
             {(item.city || item.industry) ? (
@@ -129,7 +132,7 @@ export default function ContactsList() {
             <EmptyState
               icon="people-circle-outline"
               title="No contacts yet"
-              message="Contacts appear here once leads have a phone, SPOC email, WhatsApp, or mobile recorded."
+              message="Contacts appear here once a sales rep fills the SPOC section (email / WhatsApp / mobile) on the Post-Call Form."
             />
           }
         />
