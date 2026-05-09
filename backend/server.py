@@ -124,20 +124,28 @@ def _send_via_smtp(to_email: str, subject: str, html: str, text: str) -> tuple[b
 
 
 async def send_otp_email(to_email: str, otp: str) -> tuple[bool, str]:
-    """Tries Resend first (if configured), then SMTP. Returns (sent, diagnostic)."""
+    """Tries Resend first (if configured), then SMTP. Returns (sent, diagnostic).
+    On failure, the diagnostic includes BOTH channels' errors so the operator
+    can tell exactly what went wrong."""
     subject, html, text = _build_otp_email(otp)
+    attempted: list[str] = []
     if RESEND_API_KEY:
         ok, msg = await _send_via_resend(to_email, subject, html, text)
+        attempted.append(f"Resend: {msg}")
         if ok:
             logging.info(f"OTP email to {to_email}: {msg}")
             return True, msg
         logging.warning(f"Resend failed for {to_email}: {msg} — falling back to SMTP")
+    else:
+        attempted.append("Resend: RESEND_API_KEY not set on this backend")
     ok, msg = _send_via_smtp(to_email, subject, html, text)
+    attempted.append(f"SMTP: {msg}")
     if ok:
         logging.info(f"OTP email to {to_email}: {msg}")
-    else:
-        logging.error(f"OTP email to {to_email} FAILED: {msg}")
-    return ok, msg
+        return True, msg
+    full_diag = " | ".join(attempted)
+    logging.error(f"OTP email to {to_email} FAILED — {full_diag}")
+    return False, full_diag
 
 app = FastAPI(title="AHM Sales CRM API")
 api_router = APIRouter(prefix="/api")
