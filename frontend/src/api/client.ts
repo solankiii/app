@@ -5,7 +5,10 @@ const BACKEND_URL = process.env.EXPO_PUBLIC_BACKEND_URL;
 
 // Routes that must NOT carry an Authorization header — auth endpoints work
 // against credentials, not tokens, and a stale token can confuse middleware.
-const NO_AUTH_PATHS = ['/auth/login', '/auth/register', '/auth/forgot-password', '/auth/reset-password'];
+// IMPORTANT: /auth/reset-password is the ADMIN endpoint and DOES require a
+// token (admin must be logged in). Only the user-facing public auth paths
+// belong here.
+const NO_AUTH_PATHS = ['/auth/login', '/auth/register', '/auth/forgot-password', '/auth/verify-reset-otp'];
 
 // Render free-tier services may take 30-60s to cold-start. Use a longer
 // timeout for auth endpoints so the user doesn't see a misleading
