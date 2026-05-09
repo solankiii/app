@@ -155,6 +155,8 @@ class LeadCreate(BaseModel):
     spoc_email: Optional[str] = None
     spoc_whatsapp: Optional[str] = None
     spoc_mobile: Optional[str] = None
+    spoc_instagram: Optional[str] = None
+    spoc_website: Optional[str] = None
 
 class LeadUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -171,6 +173,8 @@ class LeadUpdate(BaseModel):
     spoc_email: Optional[str] = None
     spoc_whatsapp: Optional[str] = None
     spoc_mobile: Optional[str] = None
+    spoc_instagram: Optional[str] = None
+    spoc_website: Optional[str] = None
 
 class UserRoleUpdate(BaseModel):
     role: str  # "admin" or "sales"
@@ -205,6 +209,8 @@ class CallSessionUpdate(BaseModel):
     spoc_email: Optional[str] = None
     spoc_whatsapp: Optional[str] = None
     spoc_mobile: Optional[str] = None
+    spoc_instagram: Optional[str] = None
+    spoc_website: Optional[str] = None
 
 class FollowUpCreate(BaseModel):
     lead_id: str
@@ -420,6 +426,7 @@ async def list_contacts(
         "_id": 0, "id": 1, "full_name": 1, "phone_number": 1, "company_name": 1,
         "city": 1, "industry": 1, "status": 1, "assigned_to": 1,
         "spoc_name": 1, "spoc_email": 1, "spoc_whatsapp": 1, "spoc_mobile": 1,
+        "spoc_instagram": 1, "spoc_website": 1,
     }).sort("updated_at", -1).limit(limit).to_list(limit)
     return {"contacts": contacts, "total": len(contacts)}
 
@@ -1195,6 +1202,8 @@ async def update_call_session(session_id: str, req: CallSessionUpdate, request: 
         "spoc_email": req.spoc_email,
         "spoc_whatsapp": req.spoc_whatsapp,
         "spoc_mobile": req.spoc_mobile,
+        "spoc_instagram": req.spoc_instagram,
+        "spoc_website": req.spoc_website,
     }.items() if v is not None and v != ""}
     if spoc_update:
         spoc_update["updated_at"] = now

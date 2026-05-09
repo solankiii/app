@@ -103,6 +103,36 @@ export default function ContactsList() {
             <Text style={[styles.actionText, !emailTarget && styles.actionTextDisabled]}>Email</Text>
           </TouchableOpacity>
         </View>
+        {(item.spoc_instagram || item.spoc_website) ? (
+          <View style={styles.linksRow}>
+            {item.spoc_instagram ? (
+              <TouchableOpacity
+                style={styles.linkBtn}
+                onPress={() => {
+                  const raw = item.spoc_instagram.trim();
+                  const url = raw.startsWith('http') ? raw : `https://instagram.com/${raw.replace(/^@/, '')}`;
+                  openLink(url);
+                }}
+              >
+                <Ionicons name="logo-instagram" size={14} color="#E1306C" />
+                <Text style={styles.linkText} numberOfLines={1}>{item.spoc_instagram}</Text>
+              </TouchableOpacity>
+            ) : null}
+            {item.spoc_website ? (
+              <TouchableOpacity
+                style={styles.linkBtn}
+                onPress={() => {
+                  const raw = item.spoc_website.trim();
+                  const url = raw.startsWith('http') ? raw : `https://${raw}`;
+                  openLink(url);
+                }}
+              >
+                <Ionicons name="globe-outline" size={14} color={Colors.info} />
+                <Text style={styles.linkText} numberOfLines={1}>{item.spoc_website}</Text>
+              </TouchableOpacity>
+            ) : null}
+          </View>
+        ) : null}
       </View>
     );
   };
@@ -175,4 +205,12 @@ const styles = StyleSheet.create({
   actionDisabled: { backgroundColor: Colors.background, borderWidth: 1, borderColor: Colors.border },
   actionText: { color: '#FFFFFF', fontSize: 12, fontWeight: '600' },
   actionTextDisabled: { color: Colors.textMuted },
+  linksRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  linkBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 4,
+    paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4,
+    backgroundColor: Colors.background, borderWidth: 1, borderColor: Colors.border,
+    maxWidth: '48%',
+  },
+  linkText: { fontSize: 11, color: Colors.text },
 });
