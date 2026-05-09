@@ -352,6 +352,31 @@ async def register(req: RegisterRequest):
 async def get_me(request: Request):
     return await get_current_user(request)
 
+@api_router.get("/admin/pending-resets")
+async def list_pending_resets(request: Request):
+    """Admin-only: list all currently-active password reset OTPs.
+
+    When email delivery is down (Resend sandbox limits, SMTP blocked, etc.)
+    the admin can read the OTP from here and share it with the user
+    directly via WhatsApp / Slack / call. The user then enters that OTP
+    on the reset-password screen as normal."""
+    await require_admin(request)
+    now = datetime.now(timezone.utc).isoformat()
+    # Drop expired records lazily on read so the panel stays clean
+    await db.password_resets.delete_many({"expires_at": {"$lt": now}})
+    records = await db.password_resets.find({}, {"_id": 0}).sort("created_at", -1).to_list(50)
+    # Cross-reference users so we can show full_name alongside email
+    emails = list({r["email"] for r in records})
+    users_map = {}
+    if emails:
+        users_list = await db.users.find(
+            {"email": {"$in": emails}}, {"_id": 0, "email": 1, "full_name": 1}
+        ).to_list(100)
+        users_map = {u["email"]: u.get("full_name", "") for u in users_list}
+    for r in records:
+        r["full_name"] = users_map.get(r["email"], "")
+    return {"pending": records, "total": len(records)}
+
 @api_router.post("/admin/test-email")
 async def test_email(request: Request):
     """Admin-only diagnostic: sends a test OTP-style email to the calling
@@ -417,10 +442,21 @@ async def forgot_password(req: ForgotPasswordRequest):
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     sent, diag = await send_otp_email(req.email.lower().strip(), otp)
-    if not sent:
-        # Surface the diagnostic so the user knows whether it's a config issue.
-        raise HTTPException(500, f"Failed to send email: {diag}")
-    return {"message": "OTP sent. Check your inbox (and spam folder) within 1-2 minutes."}
+    # Even if email delivery fails, the OTP is in the DB and an admin can
+    # read it from /admin/pending-resets and share it with the user manually.
+    # We return success either way to avoid leaking which addresses are
+    # registered, AND to keep the user unblocked when the email channel is
+    # down. The email_sent flag tells the frontend whether to show the
+    # "ask your admin" hint.
+    if sent:
+        logging.info(f"Password reset for {req.email}: email sent ({diag})")
+    else:
+        logging.warning(f"Password reset for {req.email}: email FAILED ({diag}) — admin must share OTP manually via /admin/pending-resets")
+    return {
+        "message": "If this email is registered, an OTP has been generated.",
+        "email_sent": sent,
+        "delivery_diagnostic": diag if not sent else None,
+    }
 
 @api_router.post("/auth/verify-reset-otp")
 async def verify_reset_otp(req: VerifyOtpRequest):
