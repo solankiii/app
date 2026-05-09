@@ -29,7 +29,7 @@ const showMessage = (title: string, message: string) => {
 };
 
 export default function UsersScreen() {
-  const { user: currentUser } = useAuth();
+  const { user: currentUser, token } = useAuth();
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -85,6 +85,14 @@ export default function UsersScreen() {
     );
   };
 
+  const submitPasswordReset = async (userId: string, newPassword: string) => {
+    await api.post(
+      '/auth/reset-password',
+      { user_id: userId, new_password: newPassword },
+      token ? { headers: { Authorization: `Bearer ${token}` } } : undefined
+    );
+  };
+
   const resetPassword = (userId: string, userName: string) => {
     const newPw = Platform.OS === 'web'
       ? window.prompt(`Enter new password for ${userName} (min 6 chars):`)
@@ -96,7 +104,7 @@ export default function UsersScreen() {
         showMessage('Error', 'Password must be at least 6 characters');
         return;
       }
-      api.post('/auth/reset-password', { user_id: userId, new_password: newPw })
+      submitPasswordReset(userId, newPw)
         .then(() => showMessage('Success', `Password reset for ${userName}`))
         .catch((e: any) => showMessage('Error', e.response?.data?.detail || 'Failed to reset password'));
     } else if (Alert.prompt) {
@@ -112,7 +120,7 @@ export default function UsersScreen() {
                 return;
               }
               try {
-                await api.post('/auth/reset-password', { user_id: userId, new_password: pw });
+                await submitPasswordReset(userId, pw);
                 Alert.alert('Success', `Password reset for ${userName}`);
               } catch (e: any) {
                 Alert.alert('Error', e.response?.data?.detail || 'Failed to reset password');
