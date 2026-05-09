@@ -16,27 +16,32 @@ const PRESETS = [
   { key: 'custom', label: 'Custom' },
 ];
 
-const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+const localDay = (d: Date) => {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 
 const computeRange = (preset: string, customStart: string, customEnd: string): { start: string; end: string } => {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   if (preset === 'today') {
-    return { start: isoDay(today), end: isoDay(today) };
+    return { start: localDay(today), end: localDay(today) };
   }
   if (preset === 'yesterday') {
     const y = new Date(today);
     y.setDate(y.getDate() - 1);
-    return { start: isoDay(y), end: isoDay(y) };
+    return { start: localDay(y), end: localDay(y) };
   }
   if (preset === 'last_7') {
     const s = new Date(today);
     s.setDate(s.getDate() - 6);
-    return { start: isoDay(s), end: isoDay(today) };
+    return { start: localDay(s), end: localDay(today) };
   }
   if (preset === 'this_month') {
     const first = new Date(now.getFullYear(), now.getMonth(), 1);
-    return { start: isoDay(first), end: isoDay(today) };
+    return { start: localDay(first), end: localDay(today) };
   }
   // custom
   return { start: customStart, end: customEnd };
@@ -44,8 +49,8 @@ const computeRange = (preset: string, customStart: string, customEnd: string): {
 
 export default function AdminAnalytics() {
   const [preset, setPreset] = useState('today');
-  const [customStart, setCustomStart] = useState(isoDay(new Date()));
-  const [customEnd, setCustomEnd] = useState(isoDay(new Date()));
+  const [customStart, setCustomStart] = useState(localDay(new Date()));
+  const [customEnd, setCustomEnd] = useState(localDay(new Date()));
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
