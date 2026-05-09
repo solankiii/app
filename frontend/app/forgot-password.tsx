@@ -98,7 +98,13 @@ export default function ForgotPasswordScreen() {
           {error ? (
             <View style={styles.errorBox}>
               <Ionicons name="alert-circle" size={16} color={Colors.danger} />
-              <Text style={styles.errorText}>{error}</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.errorText}>{error}</Text>
+                <Text style={styles.workaroundText}>
+                  Need access right now? Ask an admin to reset your password
+                  from the Team tab (🔑 icon next to your name). No email needed.
+                </Text>
+              </View>
             </View>
           ) : null}
           {info && step === 'otp' ? (
@@ -231,7 +237,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row', alignItems: 'center', gap: 8,
     backgroundColor: Colors.dangerBg, padding: 12, borderRadius: 8, marginBottom: 12,
   },
-  errorText: { color: Colors.danger, fontSize: 13, flex: 1 },
+  errorText: { color: Colors.danger, fontSize: 13 },
+  workaroundText: { color: Colors.text, fontSize: 12, marginTop: 6, lineHeight: 16 },
   infoBox: {
     flexDirection: 'row', alignItems: 'flex-start', gap: 8,
     backgroundColor: Colors.infoBg, padding: 12, borderRadius: 8, marginBottom: 12,
