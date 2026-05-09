@@ -36,6 +36,10 @@ export default function SalesLayout() {
         title: 'Follow-ups',
         tabBarIcon: ({ color, size }) => <Ionicons name="calendar-outline" size={size} color={color} />,
       }} />
+      <Tabs.Screen name="recordings" options={{
+        title: 'Recordings',
+        tabBarIcon: ({ color, size }) => <Ionicons name="mic-outline" size={size} color={color} />,
+      }} />
       <Tabs.Screen name="sync" options={{
         title: 'Sync',
         tabBarIcon: ({ color, size }) => <Ionicons name="cloud-upload-outline" size={size} color={color} />,

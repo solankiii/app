@@ -1229,7 +1229,9 @@ async def list_follow_ups(
     status: Optional[str] = None,
     assigned_to: Optional[str] = None,
     tab: Optional[str] = None,
-    limit: int = 50, skip: int = 0
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    limit: int = 100, skip: int = 0
 ):
     user = await get_current_user(request)
     query = {}
@@ -1240,24 +1242,45 @@ async def list_follow_ups(
     if status:
         query["status"] = status
     now = datetime.now(timezone.utc)
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
-    today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999).isoformat()
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
     if tab == "overdue":
-        query["follow_up_at"] = {"$lt": today_start}
+        query["follow_up_at"] = {"$lt": today_start.isoformat()}
         query["status"] = "pending"
     elif tab == "today":
-        query["follow_up_at"] = {"$gte": today_start, "$lte": today_end}
+        query["follow_up_at"] = {"$gte": today_start.isoformat(), "$lte": today_end.isoformat()}
+    elif tab == "tomorrow":
+        tom_start = (today_start + timedelta(days=1)).isoformat()
+        tom_end = (today_end + timedelta(days=1)).isoformat()
+        query["follow_up_at"] = {"$gte": tom_start, "$lte": tom_end}
+    elif tab == "this_week":
+        # Monday to Sunday containing today
+        weekday = today_start.weekday()  # 0 = Mon
+        week_start = (today_start - timedelta(days=weekday)).isoformat()
+        week_end = (today_end + timedelta(days=6 - weekday)).isoformat()
+        query["follow_up_at"] = {"$gte": week_start, "$lte": week_end}
     elif tab == "upcoming":
-        query["follow_up_at"] = {"$gt": today_end}
+        query["follow_up_at"] = {"$gt": today_end.isoformat()}
         if "status" not in query:
             query["status"] = {"$ne": "cancelled"}
+    if start or end:
+        # Custom range overrides tab if both supplied — apply on top
+        date_filter = query.get("follow_up_at", {})
+        if start:
+            date_filter["$gte"] = start
+        if end:
+            date_filter["$lte"] = end
+        query["follow_up_at"] = date_filter
     follow_ups = await db.follow_ups.find(query, {"_id": 0}).sort("follow_up_at", 1).skip(skip).limit(limit).to_list(limit)
     # Batch enrich
     lead_ids = list({f.get("lead_id") for f in follow_ups if f.get("lead_id")})
     user_ids = list({f.get("assigned_to") for f in follow_ups if f.get("assigned_to")})
     leads_map = {}
     if lead_ids:
-        leads_list = await db.leads.find({"id": {"$in": lead_ids}}, {"_id": 0, "id": 1, "full_name": 1, "phone_number": 1}).to_list(100)
+        leads_list = await db.leads.find(
+            {"id": {"$in": lead_ids}},
+            {"_id": 0, "id": 1, "full_name": 1, "phone_number": 1, "company_name": 1, "spoc_whatsapp": 1, "spoc_mobile": 1}
+        ).to_list(100)
         leads_map = {l["id"]: l for l in leads_list}
     users_map = {}
     if user_ids:
@@ -1265,8 +1288,10 @@ async def list_follow_ups(
         users_map = {u["id"]: u["full_name"] for u in users_list}
     for f in follow_ups:
         lead = leads_map.get(f.get("lead_id"), {})
-        f["lead_name"] = lead.get("full_name", "Unknown")
+        f["lead_name"] = lead.get("full_name", "")
+        f["lead_company"] = lead.get("company_name", "")
         f["lead_phone"] = lead.get("phone_number", "")
+        f["lead_whatsapp"] = lead.get("spoc_whatsapp") or lead.get("spoc_mobile") or lead.get("phone_number", "")
         f["assigned_name"] = users_map.get(f.get("assigned_to"), "Unknown")
     total = await db.follow_ups.count_documents(query)
     return {"follow_ups": follow_ups, "total": total}
@@ -1344,12 +1369,26 @@ async def create_lead_note(req: LeadNoteCreate, request: Request):
 async def list_recordings(
     request: Request,
     upload_status: Optional[str] = None,
-    limit: int = 50, skip: int = 0
+    search: Optional[str] = None,
+    limit: int = 100, skip: int = 0
 ):
-    await get_current_user(request)
+    user = await get_current_user(request)
     query = {}
     if upload_status:
         query["upload_status"] = upload_status
+
+    # For sales role, restrict to recordings of THEIR call sessions only.
+    # call_session_id is the link; pre-filter the eligible session_ids.
+    sales_session_ids = None
+    if user["role"] == "sales":
+        sales_sessions = await db.call_sessions.find(
+            {"user_id": user["id"]}, {"_id": 0, "id": 1}
+        ).to_list(length=None)
+        sales_session_ids = [s["id"] for s in sales_sessions]
+        if not sales_session_ids:
+            return {"recordings": [], "total": 0}
+        query["call_session_id"] = {"$in": sales_session_ids}
+
     recordings = await db.call_recordings.find(
         query, {"_id": 0, "base64_data": 0}
     ).sort("uploaded_at", -1).skip(skip).limit(limit).to_list(limit)
@@ -1363,23 +1402,41 @@ async def list_recordings(
     user_ids = list({s.get("user_id") for s in sessions_map.values() if s.get("user_id")})
     leads_map = {}
     if lead_ids:
-        leads_list = await db.leads.find({"id": {"$in": lead_ids}}, {"_id": 0, "id": 1, "full_name": 1}).to_list(100)
-        leads_map = {l["id"]: l["full_name"] for l in leads_list}
+        leads_list = await db.leads.find(
+            {"id": {"$in": lead_ids}},
+            {"_id": 0, "id": 1, "full_name": 1, "phone_number": 1, "company_name": 1}
+        ).to_list(100)
+        leads_map = {l["id"]: l for l in leads_list}
     users_map = {}
     if user_ids:
         users_list = await db.users.find({"id": {"$in": user_ids}}, {"_id": 0, "id": 1, "full_name": 1}).to_list(100)
         users_map = {u["id"]: u["full_name"] for u in users_list}
+    enriched = []
     for r in recordings:
         session = sessions_map.get(r.get("call_session_id"), {})
+        lead = leads_map.get(session.get("lead_id"), {})
         r["user_id"] = session.get("user_id")
         r["lead_id"] = session.get("lead_id")
         r["outcome"] = session.get("outcome")
         r["duration_seconds"] = session.get("duration_seconds")
         r["call_started_at"] = session.get("call_started_at")
-        r["lead_name"] = leads_map.get(session.get("lead_id"), "Unknown")
+        r["dialed_number"] = session.get("dialed_number")
+        r["lead_name"] = lead.get("full_name", "")
+        r["lead_company"] = lead.get("company_name", "")
+        r["lead_phone"] = lead.get("phone_number", "")
         r["user_name"] = users_map.get(session.get("user_id"), "Unknown")
-    total = await db.call_recordings.count_documents(query)
-    return {"recordings": recordings, "total": total}
+        # Optional substring search across the enriched fields
+        if search:
+            s = search.lower()
+            blob = " ".join([str(v or "").lower() for v in (
+                r["lead_name"], r["lead_company"], r["lead_phone"],
+                r["user_name"], r.get("file_name") or "", r["dialed_number"] or "",
+            )])
+            if s not in blob:
+                continue
+        enriched.append(r)
+    total = len(enriched) if search else await db.call_recordings.count_documents(query)
+    return {"recordings": enriched, "total": total}
 
 @api_router.post("/recordings/upload")
 async def upload_recording(
@@ -1504,6 +1561,11 @@ async def admin_dashboard(request: Request):
                 "user_id": su["id"], "created_at": {"$gte": today_start, "$lte": today_end}
             }),
             "total_leads": await db.leads.count_documents({"assigned_to": su["id"]}),
+            "connected_today": await db.call_sessions.count_documents({
+                "user_id": su["id"], "outcome": "connected",
+                "created_at": {"$gte": today_start, "$lte": today_end}
+            }),
+            # Kept for backward-compat; deprecated — UI should prefer connected_today
             "connected_calls": await db.call_sessions.count_documents({
                 "user_id": su["id"], "outcome": "connected"
             }),
@@ -1520,6 +1582,94 @@ async def admin_dashboard(request: Request):
         "pending_follow_ups": await db.follow_ups.count_documents({"status": "pending"}),
         "uploaded_recordings": await db.call_recordings.count_documents({"upload_status": "uploaded"}),
         "salesperson_performance": performance
+    }
+
+
+@api_router.get("/analytics/range")
+async def analytics_range(
+    request: Request,
+    start: str,
+    end: str,
+    user_id: Optional[str] = None,
+):
+    """Range-based analytics. Admin-only — sales reps use their own dashboards.
+    Returns totals + per-rep breakdown for the [start, end) UTC window."""
+    await require_admin(request)
+    # Treat start/end as inclusive day boundaries if no time component
+    def to_iso(s: str, end_of_day: bool = False) -> str:
+        if "T" in s:
+            return s
+        # YYYY-MM-DD format — anchor at UTC midnight
+        try:
+            d = datetime.fromisoformat(s)
+        except Exception:
+            raise HTTPException(400, f"Invalid date: {s}")
+        if end_of_day:
+            d = d.replace(hour=23, minute=59, second=59, microsecond=999999)
+        return d.replace(tzinfo=timezone.utc).isoformat()
+
+    start_iso = to_iso(start, end_of_day=False)
+    end_iso = to_iso(end, end_of_day=True)
+    range_match = {"$gte": start_iso, "$lte": end_iso}
+
+    # Per-rep breakdown
+    if user_id:
+        sales_users = await db.users.find({"id": user_id}, {"_id": 0, "password_hash": 0}).to_list(1)
+    else:
+        sales_users = await db.users.find({"role": "sales"}, {"_id": 0, "password_hash": 0}).to_list(100)
+
+    breakdown = []
+    for su in sales_users:
+        uid = su["id"]
+        calls = await db.call_sessions.count_documents({"user_id": uid, "created_at": range_match})
+        connected = await db.call_sessions.count_documents({
+            "user_id": uid, "outcome": "connected", "created_at": range_match
+        })
+        not_connected = await db.call_sessions.count_documents({
+            "user_id": uid,
+            "outcome": {"$in": ["no_answer", "busy", "declined", "wrong_number", "voicemail", "switched_off"]},
+            "created_at": range_match,
+        })
+        leads_added = await db.leads.count_documents({"created_by": uid, "created_at": range_match})
+        if leads_added == 0:
+            # created_by may not be populated for older leads; fall back to "assigned within range"
+            leads_added = await db.leads.count_documents({"assigned_to": uid, "created_at": range_match})
+        fu_pending = await db.follow_ups.count_documents({
+            "assigned_to": uid, "status": "pending", "follow_up_at": range_match
+        })
+        fu_completed = await db.follow_ups.count_documents({
+            "assigned_to": uid, "status": "done", "updated_at": range_match
+        })
+        # Recordings: count call_sessions with recording_status=uploaded, attributed to user
+        recordings = await db.call_sessions.count_documents({
+            "user_id": uid, "recording_status": "uploaded", "created_at": range_match
+        })
+        breakdown.append({
+            "user_id": uid,
+            "full_name": su["full_name"],
+            "calls": calls,
+            "connected": connected,
+            "not_connected": not_connected,
+            "leads_added": leads_added,
+            "follow_ups_pending": fu_pending,
+            "follow_ups_completed": fu_completed,
+            "recordings": recordings,
+        })
+
+    totals = {
+        "calls": sum(b["calls"] for b in breakdown),
+        "connected": sum(b["connected"] for b in breakdown),
+        "not_connected": sum(b["not_connected"] for b in breakdown),
+        "leads_added": sum(b["leads_added"] for b in breakdown),
+        "follow_ups_pending": sum(b["follow_ups_pending"] for b in breakdown),
+        "follow_ups_completed": sum(b["follow_ups_completed"] for b in breakdown),
+        "recordings": sum(b["recordings"] for b in breakdown),
+    }
+    return {
+        "start": start_iso,
+        "end": end_iso,
+        "totals": totals,
+        "per_user": breakdown,
     }
 
 

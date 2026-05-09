@@ -131,7 +131,7 @@ export default function ContactsList() {
           ListEmptyComponent={
             <EmptyState
               icon="people-circle-outline"
-              title="No contacts yet"
+              title="No contacts assigned to you yet."
               message="Contacts appear here once a sales rep fills the SPOC section (email / WhatsApp / mobile) on the Post-Call Form."
             />
           }

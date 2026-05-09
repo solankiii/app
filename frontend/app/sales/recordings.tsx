@@ -1,6 +1,6 @@
 import React from 'react';
 import RecordingsList from '@/src/components/RecordingsList';
 
-export default function AdminRecordings() {
+export default function SalesRecordings() {
   return <RecordingsList />;
 }

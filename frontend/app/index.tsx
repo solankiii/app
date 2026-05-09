@@ -19,17 +19,27 @@ export default function LoginScreen() {
   const [error, setError] = useState('');
 
   const handleLogin = async () => {
-    if (!email.trim() || !password.trim()) {
+    if (loading) return; // guard against double-tap
+    if (!email.trim() || !password) {
       setError('Please enter email and password');
       return;
     }
     setError('');
     setLoading(true);
     try {
-      await login(email.trim(), password);
+      await login(email.trim().toLowerCase(), password);
     } catch (e: any) {
+      const status = e.response?.status;
       const detail = e.response?.data?.detail;
-      setError(typeof detail === 'string' ? detail : 'Invalid email or password');
+      if (status === 401) {
+        setError(typeof detail === 'string' ? detail : 'Invalid email or password');
+      } else if (status === 403) {
+        setError(typeof detail === 'string' ? detail : 'Account disabled. Contact admin.');
+      } else if (e.code === 'ECONNABORTED' || !e.response) {
+        setError('Login failed. Please try again.');
+      } else {
+        setError('Login failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }

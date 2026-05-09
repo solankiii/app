@@ -100,9 +100,14 @@ export default function AdminDashboard() {
             icon={<Ionicons name="calendar" size={20} color={Colors.warning} />} />
         </View>
         <View style={styles.metricsGrid}>
-          <MetricCard label="Recordings" value={data?.uploaded_recordings ?? 0} color={Colors.danger}
-            icon={<Ionicons name="mic" size={20} color={Colors.danger} />} />
-          <View style={{ flex: 1 }} />
+          <TouchableOpacity activeOpacity={0.7} style={{ flex: 1 }} onPress={() => router.push('/admin/recordings')}>
+            <MetricCard label="Recordings" value={data?.uploaded_recordings ?? 0} color={Colors.danger}
+              icon={<Ionicons name="mic" size={20} color={Colors.danger} />} />
+          </TouchableOpacity>
+          <TouchableOpacity activeOpacity={0.7} style={{ flex: 1 }} onPress={() => router.push('/admin/analytics')}>
+            <MetricCard label="Analytics" value={'→'} color={Colors.info}
+              icon={<Ionicons name="bar-chart-outline" size={20} color={Colors.info} />} />
+          </TouchableOpacity>
         </View>
 
         <Text style={styles.sectionTitle}>Salesperson Performance</Text>
@@ -130,8 +135,8 @@ export default function AdminDashboard() {
                 <Text style={styles.perfStatLabel}>Leads</Text>
               </View>
               <View style={styles.perfStat}>
-                <Text style={styles.perfStatVal}>{sp.connected_calls}</Text>
-                <Text style={styles.perfStatLabel}>Connected</Text>
+                <Text style={styles.perfStatVal}>{sp.connected_today ?? sp.connected_calls ?? 0}</Text>
+                <Text style={styles.perfStatLabel}>Connected Today</Text>
               </View>
             </View>
             {sp.last_3_days && sp.last_3_days.length > 0 && (

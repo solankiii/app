@@ -48,19 +48,21 @@ export default function AdminLayout() {
         title: 'Contacts',
         tabBarIcon: ({ color, size }) => <Ionicons name="people-circle-outline" size={size} color={color} />,
       }} />
-      <Tabs.Screen name="share" options={{
-        title: 'QR Share',
-        tabBarIcon: ({ color, size }) => <Ionicons name="qr-code-outline" size={size} color={color} />,
-        href: null,
-      }} />
       <Tabs.Screen name="recordings" options={{
         title: 'Recordings',
         tabBarIcon: ({ color, size }) => <Ionicons name="mic-outline" size={size} color={color} />,
-        href: null,
       }} />
       <Tabs.Screen name="follow-ups" options={{
         title: 'Follow-ups',
         tabBarIcon: ({ color, size }) => <Ionicons name="calendar-outline" size={size} color={color} />,
+      }} />
+      <Tabs.Screen name="analytics" options={{
+        title: 'Analytics',
+        tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart-outline" size={size} color={color} />,
+      }} />
+      <Tabs.Screen name="share" options={{
+        title: 'QR Share',
+        tabBarIcon: ({ color, size }) => <Ionicons name="qr-code-outline" size={size} color={color} />,
         href: null,
       }} />
     </Tabs>
