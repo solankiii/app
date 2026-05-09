@@ -40,34 +40,104 @@ ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("ALLOWED_ORIGINS", "*").spl
 
 SMTP_EMAIL = os.environ.get("SMTP_EMAIL", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_FROM_NAME = os.environ.get("SMTP_FROM_NAME", "AHM Sales CRM")
 
-def send_otp_email(to_email: str, otp: str):
-    if not SMTP_EMAIL or not SMTP_PASSWORD:
-        logging.warning("SMTP not configured — cannot send OTP email")
-        return False
-    msg = MIMEMultipart()
-    msg["From"] = SMTP_EMAIL
-    msg["To"] = to_email
-    msg["Subject"] = "AHM Sales CRM - Password Reset OTP"
-    body = f"""
-    <h2>Password Reset</h2>
-    <p>Your one-time password (OTP) to reset your account password is:</p>
-    <h1 style="color: #2563EB; letter-spacing: 8px; font-size: 36px;">{otp}</h1>
+# Resend API (preferred — more reliable than Gmail SMTP for transactional mail).
+# Set RESEND_API_KEY and (optionally) RESEND_FROM_EMAIL on Render to enable.
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+RESEND_FROM_EMAIL = os.environ.get("RESEND_FROM_EMAIL", "")  # e.g. "AHM CRM <crm@yourdomain.com>"
+
+
+def _build_otp_email(otp: str) -> tuple[str, str, str]:
+    """Returns (subject, html_body, text_body)."""
+    subject = "AHM Sales CRM — Password Reset OTP"
+    html = f"""
+    <h2 style="font-family: -apple-system, sans-serif;">Password Reset</h2>
+    <p>Your one-time password (OTP) to reset your AHM Sales CRM account password is:</p>
+    <h1 style="color: #2563EB; letter-spacing: 8px; font-size: 36px; font-family: monospace;">{otp}</h1>
     <p>This OTP is valid for <b>10 minutes</b>.</p>
-    <p>If you did not request this, please ignore this email.</p>
+    <p>If you did not request this, please ignore this email — your password will not change.</p>
     <br>
-    <p style="color: #888;">— AHM Sales CRM</p>
+    <p style="color: #888; font-size: 12px;">— AHM Sales CRM</p>
     """
-    msg.attach(MIMEText(body, "html"))
+    text = (
+        f"AHM Sales CRM — Password Reset\n\n"
+        f"Your one-time password (OTP) is: {otp}\n\n"
+        f"This OTP is valid for 10 minutes.\n"
+        f"If you did not request this, please ignore this email.\n\n"
+        f"— AHM Sales CRM"
+    )
+    return subject, html, text
+
+
+async def _send_via_resend(to_email: str, subject: str, html: str, text: str) -> tuple[bool, str]:
+    """Returns (sent, message). Falls back gracefully if API rejects."""
+    if not RESEND_API_KEY:
+        return False, "RESEND_API_KEY not set"
+    sender = RESEND_FROM_EMAIL or "onboarding@resend.dev"  # resend.dev sandbox sender works for testing
     try:
-        with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.post(
+                "https://api.resend.com/emails",
+                headers={
+                    "Authorization": f"Bearer {RESEND_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "from": sender,
+                    "to": [to_email],
+                    "subject": subject,
+                    "html": html,
+                    "text": text,
+                },
+            )
+        if r.status_code in (200, 201, 202):
+            return True, "sent via Resend"
+        return False, f"Resend rejected: HTTP {r.status_code} {r.text[:200]}"
+    except Exception as e:
+        return False, f"Resend exception: {e}"
+
+
+def _send_via_smtp(to_email: str, subject: str, html: str, text: str) -> tuple[bool, str]:
+    if not SMTP_EMAIL or not SMTP_PASSWORD:
+        return False, "SMTP_EMAIL / SMTP_PASSWORD not set"
+    msg = MIMEMultipart("alternative")
+    msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_EMAIL}>"
+    msg["To"] = to_email
+    msg["Reply-To"] = SMTP_EMAIL
+    msg["Subject"] = subject
+    msg.attach(MIMEText(text, "plain"))
+    msg.attach(MIMEText(html, "html"))
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as server:
             server.starttls()
             server.login(SMTP_EMAIL, SMTP_PASSWORD)
-            server.sendmail(SMTP_EMAIL, to_email, msg.as_string())
-        return True
+            server.sendmail(SMTP_EMAIL, [to_email], msg.as_string())
+        return True, "sent via SMTP"
+    except smtplib.SMTPAuthenticationError as e:
+        # Most common Gmail failure: wrong password / non-App-Password
+        return False, f"SMTP auth failed (use a Gmail App Password, not your account password): {e.smtp_code}"
     except Exception as e:
-        logging.error(f"Failed to send email: {e}")
-        return False
+        return False, f"SMTP exception: {e}"
+
+
+async def send_otp_email(to_email: str, otp: str) -> tuple[bool, str]:
+    """Tries Resend first (if configured), then SMTP. Returns (sent, diagnostic)."""
+    subject, html, text = _build_otp_email(otp)
+    if RESEND_API_KEY:
+        ok, msg = await _send_via_resend(to_email, subject, html, text)
+        if ok:
+            logging.info(f"OTP email to {to_email}: {msg}")
+            return True, msg
+        logging.warning(f"Resend failed for {to_email}: {msg} — falling back to SMTP")
+    ok, msg = _send_via_smtp(to_email, subject, html, text)
+    if ok:
+        logging.info(f"OTP email to {to_email}: {msg}")
+    else:
+        logging.error(f"OTP email to {to_email} FAILED: {msg}")
+    return ok, msg
 
 app = FastAPI(title="AHM Sales CRM API")
 api_router = APIRouter(prefix="/api")
@@ -274,6 +344,24 @@ async def register(req: RegisterRequest):
 async def get_me(request: Request):
     return await get_current_user(request)
 
+@api_router.post("/admin/test-email")
+async def test_email(request: Request):
+    """Admin-only diagnostic: sends a test OTP-style email to the calling
+    admin so they can verify which delivery channel is actually working
+    in production."""
+    admin = await require_admin(request)
+    target = admin.get("email")
+    if not target:
+        raise HTTPException(400, "Admin user has no email on file")
+    ok, diag = await send_otp_email(target, "000000")
+    return {
+        "ok": ok,
+        "diagnostic": diag,
+        "to": target,
+        "resend_configured": bool(RESEND_API_KEY),
+        "smtp_configured": bool(SMTP_EMAIL and SMTP_PASSWORD),
+    }
+
 @api_router.post("/auth/reset-password")
 async def reset_password(req: ResetPasswordRequest, request: Request):
     """Admin resets any user's password."""
@@ -320,10 +408,11 @@ async def forgot_password(req: ForgotPasswordRequest):
         "expires_at": expires.isoformat(),
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
-    sent = send_otp_email(req.email.lower().strip(), otp)
+    sent, diag = await send_otp_email(req.email.lower().strip(), otp)
     if not sent:
-        raise HTTPException(500, "Failed to send email. SMTP not configured — contact your admin.")
-    return {"message": "If this email is registered, you will receive an OTP."}
+        # Surface the diagnostic so the user knows whether it's a config issue.
+        raise HTTPException(500, f"Failed to send email: {diag}")
+    return {"message": "OTP sent. Check your inbox (and spam folder) within 1-2 minutes."}
 
 @api_router.post("/auth/verify-reset-otp")
 async def verify_reset_otp(req: VerifyOtpRequest):

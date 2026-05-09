@@ -22,21 +22,32 @@ export default function ForgotPasswordScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
 
   const handleSendOtp = async () => {
     if (!email.trim()) { setError('Please enter your email'); return; }
     setError('');
+    setInfo('');
     setLoading(true);
     try {
-      await api.post('/auth/forgot-password', { email: email.trim() });
+      const res = await api.post('/auth/forgot-password', { email: email.trim().toLowerCase() });
+      setInfo(res.data?.message || 'OTP sent. Check your inbox AND spam folder within 1-2 minutes.');
       setStep('otp');
     } catch (e: any) {
       const detail = e.response?.data?.detail;
-      if (detail && typeof detail === 'string' && detail.includes('SMTP')) {
-        setError('Email service not configured. Contact your admin to reset your password.');
+      const status = e.response?.status;
+      if (status === 500 && typeof detail === 'string') {
+        // Backend gives a clear diagnostic — show it instead of silently
+        // advancing to the OTP screen.
+        setError(`Could not send email. ${detail}`);
+      } else if (status === 500) {
+        setError('Could not send email. Please contact your admin.');
+      } else if (!e.response) {
+        setError('Network problem. Please try again in a moment.');
       } else {
-        // Always move to OTP step to prevent email enumeration
-        setStep('otp');
+        // Treat any other error as a generic failure rather than pretending
+        // the OTP was sent.
+        setError(detail || 'Could not send OTP. Please try again.');
       }
     } finally {
       setLoading(false);
@@ -88,6 +99,12 @@ export default function ForgotPasswordScreen() {
             <View style={styles.errorBox}>
               <Ionicons name="alert-circle" size={16} color={Colors.danger} />
               <Text style={styles.errorText}>{error}</Text>
+            </View>
+          ) : null}
+          {info && step === 'otp' ? (
+            <View style={styles.infoBox}>
+              <Ionicons name="information-circle" size={16} color={Colors.info} />
+              <Text style={styles.infoText}>{info}</Text>
             </View>
           ) : null}
 
@@ -215,6 +232,11 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.dangerBg, padding: 12, borderRadius: 8, marginBottom: 12,
   },
   errorText: { color: Colors.danger, fontSize: 13, flex: 1 },
+  infoBox: {
+    flexDirection: 'row', alignItems: 'flex-start', gap: 8,
+    backgroundColor: Colors.infoBg, padding: 12, borderRadius: 8, marginBottom: 12,
+  },
+  infoText: { color: Colors.info, fontSize: 12, flex: 1, lineHeight: 17 },
   inputGroup: { gap: 6 },
   label: { fontSize: 13, fontWeight: '600', color: Colors.text },
   inputWrapper: {
