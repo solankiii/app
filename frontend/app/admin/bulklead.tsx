@@ -10,6 +10,9 @@ import api from '@/src/api/client';
 
 const PRESET_CITIES = ['Pune', 'Mumbai', 'Delhi', 'Bangalore'];
 const TARGET_PRESETS = [50, 100, 200, 500, 1000];
+// Enrich in chunks well under the backend's per-job cap so any batch size works
+// and the (free-tier) backend never has to hold one huge job in memory.
+const ENRICH_CHUNK_SIZE = 500;
 
 const showMessage = (title: string, message: string) => {
   if (Platform.OS === 'web') window.alert(`${title}: ${message}`);
@@ -168,34 +171,44 @@ export default function BulkLeadScreen() {
     setEnriching(true);
     setEnrichProgress({ phase: 'starting', done: 0, total: flat.length });
     try {
-      const start = await api.post('/leads/enrich-start', { leads: flat }, { timeout: 60000 });
-      const jobId = start.data.job_id;
-      if (!jobId) throw new Error('No job id returned');
+      const allResults: LeadRow[] = [];
+      // Split into chunks so large batches (e.g. 1600+) stay under the backend
+      // per-job cap and run as sequential jobs with one combined progress bar.
+      for (let start = 0; start < flat.length; start += ENRICH_CHUNK_SIZE) {
+        const chunk = flat.slice(start, start + ENRICH_CHUNK_SIZE);
+        const res = await api.post('/leads/enrich-start', { leads: chunk }, { timeout: 60000 });
+        const jobId = res.data.job_id;
+        if (!jobId) throw new Error('No job id returned');
 
-      while (true) {
-        await sleep(2000);
-        const st = await api.get(`/leads/enrich-status/${jobId}`, { timeout: 30000 });
-        const job = st.data;
-        setEnrichProgress({ phase: job.phase, done: job.done || 0, total: job.total || flat.length });
-
-        if (job.status === 'done') {
-          const results: LeadRow[] = job.results || [];
-          let idx = 0;
-          const newCombos = combos.map(c => {
-            const slice = results.slice(idx, idx + c.leads.length);
-            idx += c.leads.length;
-            return { ...c, leads: slice.length ? slice : c.leads };
+        while (true) {
+          await sleep(2000);
+          const st = await api.get(`/leads/enrich-status/${jobId}`, { timeout: 30000 });
+          const job = st.data;
+          setEnrichProgress({
+            phase: job.phase,
+            done: allResults.length + (job.done || 0),
+            total: flat.length,
           });
-          setCombos(newCombos);
-          setEnriched(true);
-          showMessage('Done', `Enriched ${results.length} leads with website + social data.`);
-          break;
-        }
-        if (job.status === 'error') {
-          showMessage('Enrichment failed', job.error || 'Unknown error');
-          break;
+          if (job.status === 'done') {
+            allResults.push(...((job.results as LeadRow[]) || []));
+            break;
+          }
+          if (job.status === 'error') {
+            throw new Error(job.error || 'Enrichment job failed');
+          }
         }
       }
+
+      // Redistribute enriched rows back into combos in original order.
+      let idx = 0;
+      const newCombos = combos.map(c => {
+        const slice = allResults.slice(idx, idx + c.leads.length);
+        idx += c.leads.length;
+        return { ...c, leads: slice.length ? slice : c.leads };
+      });
+      setCombos(newCombos);
+      setEnriched(true);
+      showMessage('Done', `Enriched ${allResults.length} leads with website + social data.`);
     } catch (e: any) {
       showMessage('Error', e.response?.data?.detail || e.message || 'Enrichment failed');
     } finally {
