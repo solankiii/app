@@ -1241,12 +1241,19 @@ def _enrich_rows_sync(lead_rows: list, settings: dict, progress: dict) -> list:
         if source.get("instagram_url") and not item.instagram_url:
             item.instagram_url = source["instagram_url"]
 
-    def prof_cb(done, total, name):
-        progress.update(phase="social", done=done, total=total)
+    # The social-profile phase (fetching IG/LinkedIn pages for follower counts)
+    # is slow and frequently blocked from datacenter IPs. The IG/LinkedIn URLs
+    # themselves are already extracted during the website phase, so this phase
+    # only adds follower/profile-name metadata and is opt-in.
+    if settings.get("skip_social"):
+        profiles = [{} for _ in enriched]
+    else:
+        def prof_cb(done, total, name):
+            progress.update(phase="social", done=done, total=total)
 
-    profiles = collect_social_profile_details(
-        enriched, workers=settings["profile_workers"], progress_cb=prof_cb
-    )
+        profiles = collect_social_profile_details(
+            enriched, workers=settings["profile_workers"], progress_cb=prof_cb
+        )
     return [
         _build_enriched_row(source, item, profile)
         for source, item, profile in zip(lead_rows, enriched, profiles)
@@ -1318,9 +1325,16 @@ async def enrich_start(request: Request):
         )
 
     settings = {
-        "enrich_workers": max(1, min(int(body.get("enrich_workers") or 8), 15)),
-        "profile_workers": max(1, min(int(body.get("profile_workers") or 6), 12)),
+        "enrich_workers": max(1, min(int(body.get("enrich_workers") or 16), 32)),
+        "profile_workers": max(1, min(int(body.get("profile_workers") or 8), 16)),
+        "skip_social": bool(body.get("skip_social")),
     }
+    # How many leads even have a website — the rest finish instantly, so this is
+    # the real work size and lets the UI show a meaningful scope.
+    with_website = sum(
+        1 for r in lead_rows
+        if (r.get("website") or "").strip() and r.get("website") != "Not Available"
+    )
     job_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     await db.enrich_jobs.insert_one({
@@ -1329,6 +1343,8 @@ async def enrich_start(request: Request):
         "phase": "website",
         "done": 0,
         "total": len(lead_rows),
+        "with_website": with_website,
+        "skip_social": settings["skip_social"],
         "results": None,
         "error": None,
         "created_at": now,
