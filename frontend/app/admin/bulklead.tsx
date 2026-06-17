@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity, StyleSheet,
   ScrollView, ActivityIndicator, Platform, Alert, Switch,
@@ -51,9 +51,22 @@ type LeadRow = {
   whatsapp_url?: string;
 };
 type Combo = { city: string; business_type: string; leads: LeadRow[] };
-type EnrichProgress = { phase: string; done: number; total: number };
+type EnrichProgress = {
+  phase: string;
+  done: number;
+  total: number;
+  chunkIdx: number;
+  chunkCount: number;
+  withWebsite?: number;
+};
 
 const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
+
+const fmtElapsed = (ms: number) => {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  return m > 0 ? `${m}m ${s % 60}s` : `${s}s`;
+};
 
 export default function BulkLeadScreen() {
   const router = useRouter();
@@ -84,7 +97,10 @@ export default function BulkLeadScreen() {
 
   const [enriching, setEnriching] = useState(false);
   const [enriched, setEnriched] = useState(false);
+  const [fetchSocial, setFetchSocial] = useState(false);
   const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
+  const [enrichStartedAt, setEnrichStartedAt] = useState<number | null>(null);
+  const cancelEnrichRef = useRef(false);
 
   useEffect(() => {
     api.get('/users/sales').then(r => setSalesUsers(r.data || [])).catch(() => {});
@@ -168,24 +184,32 @@ export default function BulkLeadScreen() {
     const flat = combos.flatMap(c => c.leads);
     if (!flat.length) { showMessage('Error', 'No leads to enrich'); return; }
 
+    cancelEnrichRef.current = false;
+    const chunkCount = Math.ceil(flat.length / ENRICH_CHUNK_SIZE);
+    const allResults: LeadRow[] = [];
     setEnriching(true);
-    setEnrichProgress({ phase: 'starting', done: 0, total: flat.length });
+    setEnrichStartedAt(Date.now());
+    setEnrichProgress({ phase: 'starting', done: 0, total: flat.length, chunkIdx: 0, chunkCount });
     try {
-      const allResults: LeadRow[] = [];
-      // Split into chunks so large batches (e.g. 1600+) stay under the backend
-      // per-job cap and run as sequential jobs with one combined progress bar.
-      for (let start = 0; start < flat.length; start += ENRICH_CHUNK_SIZE) {
+      // Split into chunks so large batches stay under the backend per-job cap
+      // and run as sequential jobs with one combined progress bar.
+      for (let start = 0, ci = 0; start < flat.length; start += ENRICH_CHUNK_SIZE, ci++) {
+        if (cancelEnrichRef.current) throw new Error('__cancelled__');
         const chunk = flat.slice(start, start + ENRICH_CHUNK_SIZE);
-        const res = await api.post('/leads/enrich-start', { leads: chunk }, { timeout: 60000 });
+        const res = await api.post(
+          '/leads/enrich-start',
+          { leads: chunk, skip_social: !fetchSocial },
+          { timeout: 60000 },
+        );
         const jobId = res.data.job_id;
         if (!jobId) throw new Error('No job id returned');
 
         // Poll for completion. The job keeps running on the backend even if a
-        // single status request is slow (the social phase can stall the
-        // free-tier box), so tolerate transient poll failures instead of
-        // aborting the whole enrichment.
+        // single status request is slow, so tolerate transient poll failures
+        // instead of aborting the whole enrichment.
         let pollFails = 0;
         while (true) {
+          if (cancelEnrichRef.current) throw new Error('__cancelled__');
           await sleep(2000);
           let job: any;
           try {
@@ -203,6 +227,9 @@ export default function BulkLeadScreen() {
             phase: job.phase,
             done: allResults.length + (job.done || 0),
             total: flat.length,
+            chunkIdx: ci + 1,
+            chunkCount,
+            withWebsite: job.with_website,
           });
           if (job.status === 'done') {
             allResults.push(...((job.results as LeadRow[]) || []));
@@ -223,11 +250,16 @@ export default function BulkLeadScreen() {
       });
       setCombos(newCombos);
       setEnriched(true);
-      showMessage('Done', `Enriched ${allResults.length} leads with website + social data.`);
+      showMessage('Done', `Enriched ${allResults.length} leads${fetchSocial ? ' with website + social data' : ' (website + social links)'}.`);
     } catch (e: any) {
-      showMessage('Error', e.response?.data?.detail || e.message || 'Enrichment failed');
+      if (e?.message === '__cancelled__') {
+        showMessage('Stopped', `Enrichment cancelled after ${allResults.length} of ${flat.length} leads. Nothing was changed — adjust options and re-run.`);
+      } else {
+        showMessage('Error', e.response?.data?.detail || e.message || 'Enrichment failed');
+      }
     } finally {
       setEnriching(false);
+      setEnrichProgress(null);
     }
   };
 
@@ -512,36 +544,66 @@ export default function BulkLeadScreen() {
           {/* Enrich website + socials */}
           <Text style={styles.sectionTitle}>Enrich (Optional)</Text>
           <Text style={styles.headerText}>
-            Visit each lead's website to pull contact + social links, then fetch public
-            Instagram/LinkedIn profile data. Best-effort — some sites/socials may block access.
+            Visit each lead's website to pull contact info + social links. Most Google
+            leads have no website (those are skipped instantly), so only the ones with a
+            site are fetched. Best-effort — some sites block access.
           </Text>
-          <TouchableOpacity
-            style={[styles.enrichBtn, (enriching || enriched) && { opacity: 0.6 }]}
-            onPress={enrichAll}
-            disabled={enriching || enriched}
-          >
-            {enriching ? (
-              <>
+          <View style={styles.toggleRow}>
+            <View style={{ flex: 1, paddingRight: 8 }}>
+              <Text style={styles.toggleLabel}>Also fetch Instagram/LinkedIn profile stats</Text>
+              <Text style={styles.costHint}>
+                Much slower and often blocked from the server. Off = still get IG/LinkedIn
+                links from websites, just no follower counts.
+              </Text>
+            </View>
+            <Switch value={fetchSocial} onValueChange={setFetchSocial} disabled={enriching} />
+          </View>
+
+          {enriching && enrichProgress ? (
+            <View style={styles.enrichProgressCard}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
                 <ActivityIndicator color={Colors.primary} />
-                <Text style={styles.enrichBtnText}>
-                  {'  '}
-                  {enrichProgress
-                    ? `${enrichProgress.phase === 'social' ? 'Social profiles' : 'Websites'} ${enrichProgress.done}/${enrichProgress.total}`
-                    : 'Enriching...'}
-                </Text>
-              </>
-            ) : enriched ? (
-              <>
-                <Ionicons name="checkmark-circle" size={20} color={Colors.success} />
-                <Text style={[styles.enrichBtnText, { color: Colors.success }]}>Enriched</Text>
-              </>
-            ) : (
-              <>
-                <Ionicons name="globe-outline" size={20} color={Colors.primary} />
-                <Text style={styles.enrichBtnText}>Enrich website + socials</Text>
-              </>
-            )}
-          </TouchableOpacity>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.enrichProgressTitle}>
+                    {enrichProgress.phase === 'social' ? 'Fetching social profiles' : 'Fetching websites'}
+                    {' · '}{enrichProgress.done}/{enrichProgress.total}
+                  </Text>
+                  <Text style={styles.costHint}>
+                    {enrichProgress.chunkCount > 1 ? `Batch ${enrichProgress.chunkIdx}/${enrichProgress.chunkCount} · ` : ''}
+                    {typeof enrichProgress.withWebsite === 'number' ? `${enrichProgress.withWebsite} have websites · ` : ''}
+                    {enrichStartedAt ? `${fmtElapsed(Date.now() - enrichStartedAt)} elapsed` : ''}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.cancelEnrichBtn}
+                onPress={() => { cancelEnrichRef.current = true; }}
+              >
+                <Ionicons name="stop-circle-outline" size={16} color={Colors.danger} />
+                <Text style={styles.cancelEnrichText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={[styles.enrichBtn, enriched && { opacity: 0.6 }]}
+              onPress={enrichAll}
+              disabled={enriched}
+            >
+              {enriched ? (
+                <>
+                  <Ionicons name="checkmark-circle" size={20} color={Colors.success} />
+                  <Text style={[styles.enrichBtnText, { color: Colors.success }]}>Enriched</Text>
+                </>
+              ) : (
+                <>
+                  <Ionicons name="globe-outline" size={20} color={Colors.primary} />
+                  <Text style={styles.enrichBtnText}>
+                    Enrich {fetchSocial ? 'website + socials' : 'websites'}
+                  </Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
 
           {/* Assign */}
           <Text style={styles.sectionTitle}>Assign To (Optional)</Text>
@@ -686,6 +748,16 @@ const styles = StyleSheet.create({
     height: 50, borderRadius: 8, marginTop: 8, marginBottom: 4,
   },
   enrichBtnText: { color: Colors.primary, fontSize: 14, fontWeight: '700' },
+  enrichProgressCard: {
+    borderWidth: 1, borderColor: Colors.primary, borderRadius: 8,
+    backgroundColor: Colors.surface, padding: 14, marginTop: 8, marginBottom: 4, gap: 10,
+  },
+  enrichProgressTitle: { fontSize: 14, fontWeight: '700', color: Colors.text },
+  cancelEnrichBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,
+    paddingVertical: 8, borderRadius: 8, borderWidth: 1, borderColor: Colors.danger,
+  },
+  cancelEnrichText: { color: Colors.danger, fontSize: 13, fontWeight: '700' },
   importBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     backgroundColor: Colors.primary, height: 52, borderRadius: 8, marginTop: 8,

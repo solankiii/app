@@ -24,9 +24,13 @@ def _get_int(name: str, default: int) -> int:
 
 # --- Website enrichment -----------------------------------------------------
 # Enrichment is network I/O (not CPU), so threaded parallelism is safe.
-ENRICH_CONCURRENCY = max(1, _get_int("ENRICH_CONCURRENCY", 8))
-ENRICH_TIMEOUT = _get_int("ENRICH_TIMEOUT", 12)            # seconds per page
-ENRICH_MAX_PAGES = _get_int("ENRICH_MAX_PAGES", 3)         # home + contact + about
+# Defaults are tuned for speed over completeness: a tight per-page timeout so
+# dead/slow sites don't stall the batch, and homepage-only by default (the
+# homepage already yields socials + most contact info). Bump ENRICH_MAX_PAGES
+# back to 3 via env if you need contact/about-page emails and can spare the time.
+ENRICH_CONCURRENCY = max(1, _get_int("ENRICH_CONCURRENCY", 16))
+ENRICH_TIMEOUT = _get_int("ENRICH_TIMEOUT", 7)             # seconds per page
+ENRICH_MAX_PAGES = _get_int("ENRICH_MAX_PAGES", 1)         # homepage only (set 3 for +contact/about)
 ENRICH_TEXT_SUMMARY_CHARS = _get_int("ENRICH_TEXT_SUMMARY_CHARS", 1800)
 ENRICH_USER_AGENT = _get(
     "ENRICH_USER_AGENT",
