@@ -31,22 +31,20 @@ export default function ForgotPasswordScreen() {
     setLoading(true);
     try {
       const res = await api.post('/auth/forgot-password', { email: email.trim().toLowerCase() });
-      setInfo(res.data?.message || 'OTP sent. Check your inbox AND spam folder within 1-2 minutes.');
+      // Backend always 200s now: the OTP is in the DB. If email_sent is
+      // false, the user just needs to ask the admin for it.
+      const emailSent = res.data?.email_sent !== false;
+      if (emailSent) {
+        setInfo('OTP sent. Check your inbox AND spam folder within 1-2 minutes.');
+      } else {
+        setInfo('OTP generated. Email delivery is currently down — please ask your admin to share the OTP with you (they can read it from the Password Resets tab).');
+      }
       setStep('otp');
     } catch (e: any) {
       const detail = e.response?.data?.detail;
-      const status = e.response?.status;
-      if (status === 500 && typeof detail === 'string') {
-        // Backend gives a clear diagnostic — show it instead of silently
-        // advancing to the OTP screen.
-        setError(`Could not send email. ${detail}`);
-      } else if (status === 500) {
-        setError('Could not send email. Please contact your admin.');
-      } else if (!e.response) {
+      if (!e.response) {
         setError('Network problem. Please try again in a moment.');
       } else {
-        // Treat any other error as a generic failure rather than pretending
-        // the OTP was sent.
         setError(detail || 'Could not send OTP. Please try again.');
       }
     } finally {
