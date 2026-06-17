@@ -235,6 +235,17 @@ class LeadCreate(BaseModel):
     spoc_mobile: Optional[str] = None
     spoc_instagram: Optional[str] = None
     spoc_website: Optional[str] = None
+    # Enrichment evidence (populated by the bulk-lead enrichment step)
+    instagram_url: Optional[str] = None
+    instagram_handle: Optional[str] = None
+    instagram_followers: Optional[str] = None
+    instagram_profile_name: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    linkedin_profile_name: Optional[str] = None
+    facebook_url: Optional[str] = None
+    youtube_url: Optional[str] = None
+    whatsapp_url: Optional[str] = None
+    website_title: Optional[str] = None
 
 class LeadUpdate(BaseModel):
     full_name: Optional[str] = None
@@ -253,6 +264,16 @@ class LeadUpdate(BaseModel):
     spoc_mobile: Optional[str] = None
     spoc_instagram: Optional[str] = None
     spoc_website: Optional[str] = None
+    instagram_url: Optional[str] = None
+    instagram_handle: Optional[str] = None
+    instagram_followers: Optional[str] = None
+    instagram_profile_name: Optional[str] = None
+    linkedin_url: Optional[str] = None
+    linkedin_profile_name: Optional[str] = None
+    facebook_url: Optional[str] = None
+    youtube_url: Optional[str] = None
+    whatsapp_url: Optional[str] = None
+    website_title: Optional[str] = None
 
 class UserRoleUpdate(BaseModel):
     role: str  # "admin" or "sales"
@@ -1126,6 +1147,19 @@ async def import_generated_leads(request: Request):
             "google_maps_link": row.get("google_maps_link") or None,
             "business_status": row.get("business_status") or None,
             "currently_open": row.get("currently_open") or None,
+            # Enrichment evidence (only present when leads were enriched first)
+            "email": row.get("email") or None,
+            "website_title": row.get("website_title") or None,
+            "website_fetch_status": row.get("website_fetch_status") or None,
+            "instagram_url": row.get("instagram_url") or None,
+            "instagram_handle": row.get("instagram_handle") or None,
+            "instagram_followers": row.get("instagram_followers") or None,
+            "instagram_profile_name": row.get("instagram_profile_name") or None,
+            "linkedin_url": row.get("linkedin_url") or None,
+            "linkedin_profile_name": row.get("linkedin_profile_name") or None,
+            "facebook_url": row.get("facebook_url") or None,
+            "youtube_url": row.get("youtube_url") or None,
+            "whatsapp_url": row.get("whatsapp_url") or None,
             "created_by": user["id"],
             "created_at": now,
             "updated_at": now,
@@ -1134,6 +1168,186 @@ async def import_generated_leads(request: Request):
     if to_insert:
         await db.leads.insert_many(to_insert)
     return {"created": len(to_insert), "skipped": skipped}
+
+
+# ─── Website + social enrichment (background jobs) ───────────────────────
+def _lead_row_to_enrich_input(row: dict) -> "LeadInput":
+    """Map a generated/import lead row onto the enrichment LeadInput schema."""
+    from lead_enrich.models import LeadInput
+
+    website = row.get("website")
+    if website in (None, "", "Not Available"):
+        website = None
+    return LeadInput(
+        business_name=(row.get("company_name") or row.get("business_name") or "").strip() or "Unknown",
+        industry=row.get("industry") or None,
+        city=row.get("city") or None,
+        website=website,
+        instagram=row.get("instagram") or row.get("instagram_url") or None,
+        phone=row.get("phone_number") or row.get("phone") or None,
+        email=row.get("email") or None,
+        rating=row.get("rating"),
+        reviews=row.get("total_reviews"),
+        google_maps_link=row.get("google_maps_link") or None,
+    )
+
+
+def _build_enriched_row(source: dict, item, profile: dict) -> dict:
+    """Merge enrichment + social evidence back onto the original lead row."""
+    instagram = (profile or {}).get("instagram", {}) or {}
+    linkedin = (profile or {}).get("linkedin", {}) or {}
+    out = dict(source)  # keep import fields (full_name, phone_number, company_name, ...)
+
+    website = item.final_url or item.website or source.get("website")
+    if website and website != "Not Available":
+        out["website"] = website
+
+    emails = item.emails_found or ([item.email] if item.email else [])
+    out.update({
+        "website_title": item.page_title or "",
+        "website_fetch_status": item.website_fetch_status,
+        "email": (item.email or (emails[0] if emails else "") or source.get("email") or ""),
+        "instagram_url": item.instagram_url or instagram.get("url", "") or "",
+        "instagram_handle": item.instagram_handle or instagram.get("handle", "") or "",
+        "instagram_profile_name": instagram.get("profile_name", ""),
+        "instagram_followers": instagram.get("followers", ""),
+        "linkedin_url": item.linkedin_url or linkedin.get("url", "") or "",
+        "linkedin_profile_name": linkedin.get("profile_name", ""),
+        "facebook_url": item.facebook_url or "",
+        "youtube_url": item.youtube_url or "",
+        "whatsapp_url": item.whatsapp_url or "",
+        "enriched": True,
+    })
+    return out
+
+
+def _enrich_rows_sync(lead_rows: list, settings: dict, progress: dict) -> list:
+    """Blocking enrichment pipeline — runs in a worker thread."""
+    from lead_enrich.enrichment import enrich_leads
+    from lead_enrich.social_profiles import collect_social_profile_details
+
+    leads = [_lead_row_to_enrich_input(r) for r in lead_rows]
+    progress["total"] = len(leads)
+
+    def web_cb(done, total, enriched):
+        progress.update(phase="website", done=done, total=total)
+
+    enriched = enrich_leads(leads, workers=settings["enrich_workers"], progress_cb=web_cb)
+
+    # Carry over any instagram/linkedin the source row already had.
+    for item, source in zip(enriched, lead_rows):
+        if source.get("linkedin_url") and not item.linkedin_url:
+            item.linkedin_url = source["linkedin_url"]
+        if source.get("instagram_url") and not item.instagram_url:
+            item.instagram_url = source["instagram_url"]
+
+    def prof_cb(done, total, name):
+        progress.update(phase="social", done=done, total=total)
+
+    profiles = collect_social_profile_details(
+        enriched, workers=settings["profile_workers"], progress_cb=prof_cb
+    )
+    return [
+        _build_enriched_row(source, item, profile)
+        for source, item, profile in zip(lead_rows, enriched, profiles)
+    ]
+
+
+async def _run_enrich_job(job_id: str, lead_rows: list, settings: dict) -> None:
+    progress = {"phase": "website", "done": 0, "total": len(lead_rows)}
+    stop = asyncio.Event()
+
+    async def _persist_loop():
+        while not stop.is_set():
+            await db.enrich_jobs.update_one(
+                {"id": job_id},
+                {"$set": {
+                    "phase": progress["phase"], "done": progress["done"],
+                    "total": progress["total"],
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }},
+            )
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=1.5)
+            except asyncio.TimeoutError:
+                pass
+
+    persist_task = asyncio.create_task(_persist_loop())
+    try:
+        rows = await asyncio.to_thread(_enrich_rows_sync, lead_rows, settings, progress)
+        await db.enrich_jobs.update_one(
+            {"id": job_id},
+            {"$set": {
+                "status": "done", "phase": "done",
+                "done": len(rows), "total": len(rows), "results": rows,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+    except Exception as e:
+        logging.exception("Enrichment job %s failed", job_id)
+        await db.enrich_jobs.update_one(
+            {"id": job_id},
+            {"$set": {
+                "status": "error", "error": str(e)[:500],
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
+        )
+    finally:
+        stop.set()
+        await persist_task
+
+
+@api_router.post("/leads/enrich-start")
+async def enrich_start(request: Request):
+    await require_admin(request)
+    body = await request.json()
+    lead_rows = body.get("leads") or []
+    if not lead_rows:
+        raise HTTPException(400, "No leads to enrich")
+
+    try:
+        from lead_enrich import config as enrich_config
+    except Exception as e:  # pragma: no cover - import/env guard
+        raise HTTPException(500, f"Enrichment dependencies unavailable: {e}")
+
+    if len(lead_rows) > enrich_config.ENRICH_MAX_LEADS_PER_JOB:
+        raise HTTPException(
+            400,
+            f"Too many leads ({len(lead_rows)}). Max per enrichment job is "
+            f"{enrich_config.ENRICH_MAX_LEADS_PER_JOB}.",
+        )
+
+    settings = {
+        "enrich_workers": max(1, min(int(body.get("enrich_workers") or 8), 15)),
+        "profile_workers": max(1, min(int(body.get("profile_workers") or 6), 12)),
+    }
+    job_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    await db.enrich_jobs.insert_one({
+        "id": job_id,
+        "status": "running",
+        "phase": "website",
+        "done": 0,
+        "total": len(lead_rows),
+        "results": None,
+        "error": None,
+        "created_at": now,
+        "updated_at": now,
+    })
+    asyncio.create_task(_run_enrich_job(job_id, lead_rows, settings))
+    return {"job_id": job_id, "total": len(lead_rows)}
+
+
+@api_router.get("/leads/enrich-status/{job_id}")
+async def enrich_status(job_id: str, request: Request):
+    await require_admin(request)
+    job = await db.enrich_jobs.find_one({"id": job_id}, {"_id": 0})
+    if not job:
+        raise HTTPException(404, "Enrichment job not found")
+    # Only return the (potentially large) results payload once finished.
+    if job.get("status") != "done":
+        job.pop("results", None)
+    return job
 
 
 @api_router.post("/leads/bulk-assign")

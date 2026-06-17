@@ -32,8 +32,25 @@ type LeadRow = {
   google_maps_link?: string;
   business_status?: string;
   currently_open?: string;
+  // Enrichment evidence
+  enriched?: boolean;
+  email?: string;
+  website_title?: string;
+  website_fetch_status?: string;
+  instagram_url?: string;
+  instagram_handle?: string;
+  instagram_followers?: string;
+  instagram_profile_name?: string;
+  linkedin_url?: string;
+  linkedin_profile_name?: string;
+  facebook_url?: string;
+  youtube_url?: string;
+  whatsapp_url?: string;
 };
 type Combo = { city: string; business_type: string; leads: LeadRow[] };
+type EnrichProgress = { phase: string; done: number; total: number };
+
+const sleep = (ms: number) => new Promise<void>(res => setTimeout(res, ms));
 
 export default function BulkLeadScreen() {
   const router = useRouter();
@@ -61,6 +78,10 @@ export default function BulkLeadScreen() {
   const [salesUsers, setSalesUsers] = useState<any[]>([]);
   const [assignedTo, setAssignedTo] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
+
+  const [enriching, setEnriching] = useState(false);
+  const [enriched, setEnriched] = useState(false);
+  const [enrichProgress, setEnrichProgress] = useState<EnrichProgress | null>(null);
 
   useEffect(() => {
     api.get('/users/sales').then(r => setSalesUsers(r.data || [])).catch(() => {});
@@ -113,6 +134,8 @@ export default function BulkLeadScreen() {
     setGenerating(true);
     setCombos(null);
     setEstimatedCost(null);
+    setEnriched(false);
+    setEnrichProgress(null);
     try {
       const res = await api.post('/leads/generate-preview', {
         api_key: apiKey.trim(),
@@ -134,6 +157,49 @@ export default function BulkLeadScreen() {
       showMessage('Error', e.response?.data?.detail || e.message || 'Generation failed');
     } finally {
       setGenerating(false);
+    }
+  };
+
+  const enrichAll = async () => {
+    if (!combos) return;
+    const flat = combos.flatMap(c => c.leads);
+    if (!flat.length) { showMessage('Error', 'No leads to enrich'); return; }
+
+    setEnriching(true);
+    setEnrichProgress({ phase: 'starting', done: 0, total: flat.length });
+    try {
+      const start = await api.post('/leads/enrich-start', { leads: flat }, { timeout: 60000 });
+      const jobId = start.data.job_id;
+      if (!jobId) throw new Error('No job id returned');
+
+      while (true) {
+        await sleep(2000);
+        const st = await api.get(`/leads/enrich-status/${jobId}`, { timeout: 30000 });
+        const job = st.data;
+        setEnrichProgress({ phase: job.phase, done: job.done || 0, total: job.total || flat.length });
+
+        if (job.status === 'done') {
+          const results: LeadRow[] = job.results || [];
+          let idx = 0;
+          const newCombos = combos.map(c => {
+            const slice = results.slice(idx, idx + c.leads.length);
+            idx += c.leads.length;
+            return { ...c, leads: slice.length ? slice : c.leads };
+          });
+          setCombos(newCombos);
+          setEnriched(true);
+          showMessage('Done', `Enriched ${results.length} leads with website + social data.`);
+          break;
+        }
+        if (job.status === 'error') {
+          showMessage('Enrichment failed', job.error || 'Unknown error');
+          break;
+        }
+      }
+    } catch (e: any) {
+      showMessage('Error', e.response?.data?.detail || e.message || 'Enrichment failed');
+    } finally {
+      setEnriching(false);
     }
   };
 
@@ -390,6 +456,20 @@ export default function BulkLeadScreen() {
                           {lead.phone_number} {lead.rating ? `· ★ ${lead.rating}` : ''} {lead.total_reviews ? `· ${lead.total_reviews} reviews` : ''}
                         </Text>
                         {lead.address ? <Text style={styles.leadAddr} numberOfLines={1}>{lead.address}</Text> : null}
+                        {lead.enriched && (
+                          <View style={styles.badgeRow}>
+                            {lead.website_fetch_status === 'ok' && <Text style={styles.badge}>web</Text>}
+                            {!!lead.instagram_url && (
+                              <Text style={styles.badge}>
+                                IG{lead.instagram_followers ? ` ${lead.instagram_followers}` : ''}
+                              </Text>
+                            )}
+                            {!!lead.linkedin_url && <Text style={styles.badge}>in</Text>}
+                            {!!lead.email && <Text style={styles.badge}>email</Text>}
+                            {!!lead.facebook_url && <Text style={styles.badge}>fb</Text>}
+                            {!!lead.whatsapp_url && <Text style={styles.badge}>wa</Text>}
+                          </View>
+                        )}
                       </View>
                     ))}
                     {combo.leads.length > 30 && (
@@ -400,6 +480,40 @@ export default function BulkLeadScreen() {
               </View>
             );
           })}
+
+          {/* Enrich website + socials */}
+          <Text style={styles.sectionTitle}>Enrich (Optional)</Text>
+          <Text style={styles.headerText}>
+            Visit each lead's website to pull contact + social links, then fetch public
+            Instagram/LinkedIn profile data. Best-effort — some sites/socials may block access.
+          </Text>
+          <TouchableOpacity
+            style={[styles.enrichBtn, (enriching || enriched) && { opacity: 0.6 }]}
+            onPress={enrichAll}
+            disabled={enriching || enriched}
+          >
+            {enriching ? (
+              <>
+                <ActivityIndicator color={Colors.primary} />
+                <Text style={styles.enrichBtnText}>
+                  {'  '}
+                  {enrichProgress
+                    ? `${enrichProgress.phase === 'social' ? 'Social profiles' : 'Websites'} ${enrichProgress.done}/${enrichProgress.total}`
+                    : 'Enriching...'}
+                </Text>
+              </>
+            ) : enriched ? (
+              <>
+                <Ionicons name="checkmark-circle" size={20} color={Colors.success} />
+                <Text style={[styles.enrichBtnText, { color: Colors.success }]}>Enriched</Text>
+              </>
+            ) : (
+              <>
+                <Ionicons name="globe-outline" size={20} color={Colors.primary} />
+                <Text style={styles.enrichBtnText}>Enrich website + socials</Text>
+              </>
+            )}
+          </TouchableOpacity>
 
           {/* Assign */}
           <Text style={styles.sectionTitle}>Assign To (Optional)</Text>
@@ -531,7 +645,19 @@ const styles = StyleSheet.create({
   leadName: { fontSize: 13, fontWeight: '600', color: Colors.text },
   leadMeta: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
   leadAddr: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
+  badgeRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 },
+  badge: {
+    fontSize: 10, fontWeight: '600', color: Colors.primary,
+    backgroundColor: Colors.infoBg, borderRadius: 4,
+    paddingHorizontal: 6, paddingVertical: 2, overflow: 'hidden',
+  },
   moreHint: { fontSize: 11, color: Colors.textMuted, fontStyle: 'italic', padding: 8, textAlign: 'center' },
+  enrichBtn: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
+    backgroundColor: Colors.surface, borderWidth: 1, borderColor: Colors.primary,
+    height: 50, borderRadius: 8, marginTop: 8, marginBottom: 4,
+  },
+  enrichBtnText: { color: Colors.primary, fontSize: 14, fontWeight: '700' },
   importBtn: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8,
     backgroundColor: Colors.primary, height: 52, borderRadius: 8, marginTop: 8,
