@@ -180,10 +180,25 @@ export default function BulkLeadScreen() {
         const jobId = res.data.job_id;
         if (!jobId) throw new Error('No job id returned');
 
+        // Poll for completion. The job keeps running on the backend even if a
+        // single status request is slow (the social phase can stall the
+        // free-tier box), so tolerate transient poll failures instead of
+        // aborting the whole enrichment.
+        let pollFails = 0;
         while (true) {
           await sleep(2000);
-          const st = await api.get(`/leads/enrich-status/${jobId}`, { timeout: 30000 });
-          const job = st.data;
+          let job: any;
+          try {
+            const st = await api.get(`/leads/enrich-status/${jobId}`, { timeout: 45000 });
+            job = st.data;
+            pollFails = 0;
+          } catch {
+            pollFails += 1;
+            if (pollFails >= 8) {
+              throw new Error('Lost connection to the enrichment job (backend busy). It may still be running — retry in a minute.');
+            }
+            continue; // transient timeout/network blip — keep polling
+          }
           setEnrichProgress({
             phase: job.phase,
             done: allResults.length + (job.done || 0),
