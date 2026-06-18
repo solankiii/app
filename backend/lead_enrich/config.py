@@ -33,7 +33,10 @@ def _get_int(name: str, default: int) -> int:
 # can't answer status polls (the frontend then thinks the job died). 5-6 is a
 # safe balance on a 0.1-CPU box; raise it only on a backend with real CPU.
 ENRICH_CONCURRENCY = max(1, _get_int("ENRICH_CONCURRENCY", 5))
-ENRICH_TIMEOUT = _get_int("ENRICH_TIMEOUT", 7)             # seconds per page
+# Tight per-page timeout: most wasted time is dead/parked sites hitting the full
+# timeout, so 4s reclaims a lot without adding CPU load. Bump via env if you move
+# to a backend with real CPU.
+ENRICH_TIMEOUT = _get_int("ENRICH_TIMEOUT", 4)             # seconds per page
 ENRICH_MAX_PAGES = _get_int("ENRICH_MAX_PAGES", 1)         # homepage only (set 3 for +contact/about)
 ENRICH_TEXT_SUMMARY_CHARS = _get_int("ENRICH_TEXT_SUMMARY_CHARS", 1800)
 ENRICH_USER_AGENT = _get(

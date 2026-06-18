@@ -1328,7 +1328,7 @@ async def enrich_start(request: Request):
     # responsive on small hosts) and are hard-capped so a client can't
     # oversubscribe the CPU and starve status polling.
     settings = {
-        "enrich_workers": max(1, min(int(body.get("enrich_workers") or enrich_config.ENRICH_CONCURRENCY), 8)),
+        "enrich_workers": max(1, min(int(body.get("enrich_workers") or enrich_config.ENRICH_CONCURRENCY), 12)),
         "profile_workers": max(1, min(int(body.get("profile_workers") or 4), 6)),
         "skip_social": bool(body.get("skip_social")),
     }
