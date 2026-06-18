@@ -218,8 +218,10 @@ export default function BulkLeadScreen() {
             pollFails = 0;
           } catch {
             pollFails += 1;
-            if (pollFails >= 8) {
-              throw new Error('Lost connection to the enrichment job (backend busy). It may still be running — retry in a minute.');
+            // The job keeps running on the backend even while it's too busy to
+            // answer status checks, so wait a long time before giving up.
+            if (pollFails >= 40) {
+              throw new Error('Lost connection to the enrichment job (backend busy). It may still be running — wait a minute and re-run; already-imported leads are unaffected.');
             }
             continue; // transient timeout/network blip — keep polling
           }
