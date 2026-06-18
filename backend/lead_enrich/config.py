@@ -28,7 +28,11 @@ def _get_int(name: str, default: int) -> int:
 # dead/slow sites don't stall the batch, and homepage-only by default (the
 # homepage already yields socials + most contact info). Bump ENRICH_MAX_PAGES
 # back to 3 via env if you need contact/about-page emails and can spare the time.
-ENRICH_CONCURRENCY = max(1, _get_int("ENRICH_CONCURRENCY", 16))
+# Keep this LOW on small/free-tier hosts: the enrichment threads share one CPU
+# with the web server, and too many parsing threads starve the event loop so it
+# can't answer status polls (the frontend then thinks the job died). 5-6 is a
+# safe balance on a 0.1-CPU box; raise it only on a backend with real CPU.
+ENRICH_CONCURRENCY = max(1, _get_int("ENRICH_CONCURRENCY", 5))
 ENRICH_TIMEOUT = _get_int("ENRICH_TIMEOUT", 7)             # seconds per page
 ENRICH_MAX_PAGES = _get_int("ENRICH_MAX_PAGES", 1)         # homepage only (set 3 for +contact/about)
 ENRICH_TEXT_SUMMARY_CHARS = _get_int("ENRICH_TEXT_SUMMARY_CHARS", 1800)

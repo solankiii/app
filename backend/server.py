@@ -1324,9 +1324,12 @@ async def enrich_start(request: Request):
             f"{enrich_config.ENRICH_MAX_LEADS_PER_JOB}.",
         )
 
+    # Default workers come from config (kept low so the web server stays
+    # responsive on small hosts) and are hard-capped so a client can't
+    # oversubscribe the CPU and starve status polling.
     settings = {
-        "enrich_workers": max(1, min(int(body.get("enrich_workers") or 16), 32)),
-        "profile_workers": max(1, min(int(body.get("profile_workers") or 8), 16)),
+        "enrich_workers": max(1, min(int(body.get("enrich_workers") or enrich_config.ENRICH_CONCURRENCY), 8)),
+        "profile_workers": max(1, min(int(body.get("profile_workers") or 4), 6)),
         "skip_social": bool(body.get("skip_social")),
     }
     # How many leads even have a website — the rest finish instantly, so this is
